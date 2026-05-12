@@ -1,48 +1,86 @@
+#include <Wire.h>
 #include <Motoron.h>
 
-MotoronI2C mc(16);
+MotoronI2C mc(0x10);
 
-// encoder vars
-volatile long encoderCount1 = 0;
-volatile long encoderCount2 = 0;
+// --- Encoder Settings (Motor 2 only) ---
+const int ENCODER_PIN_1A = 2;
+const int ENCODER_PIN_1B = 3;
+const int ENCODER_PIN_2A = 4;
+const int ENCODER_PIN_2B = 5;
 
-const int encoder1APin = 22;    // left encoder A
-const int encoder1BPin = 23;    // left encoder B
-const int encoder2APin = 24;    // right encoder A
-const int encoder2BPin = 25;    // right encoder B
+volatile long encoderCountLeft = 0;
+volatile long encoderCountRight = 0;
 
+// --- Encoder ISRs ---
+void encoderISR_1A() {
+  if (digitalRead(ENCODER_PIN_1A) == digitalRead(ENCODER_PIN_1B)) {
+    encoderCountLeft++;
+  }
+  else {
+    encoderCountLeft--;
+  }
+}
+
+void encoderISR_1B() {
+  if (digitalRead(ENCODER_PIN_1A) != digitalRead(ENCODER_PIN_1B)) {
+    encoderCountLeft++;
+  }
+  else {
+    encoderCountLeft--;
+  }
+}
+
+void encoderISR_2A() {
+  if (digitalRead(ENCODER_PIN_2A) == digitalRead(ENCODER_PIN_2B)) {
+    encoderCountRight++;
+  }
+  else {
+    encoderCountRight--;
+  }
+}
+
+void encoderISR_2B() {
+  if (digitalRead(ENCODER_PIN_2A) != digitalRead(ENCODER_PIN_2B)) {
+    encoderCountRight++;
+  }
+  else {
+    encoderCountRight--;
+  }
+}
 
 void setup() {
-  // put your setup code here, to run once:
-  Serial.begin(9600);
+  Serial.begin(115200);
 
-  Wire.begin();
-  
-  mc.reinitialize();   
-  mc.disableCrc();     
-  mc.clearResetFlag(); 
+  pinMode(ENCODER_PIN_1A, INPUT_PULLUP);
+  pinMode(ENCODER_PIN_1B, INPUT_PULLUP);
+  pinMode(ENCODER_PIN_2A, INPUT_PULLUP);
+  pinMode(ENCODER_PIN_2B, INPUT_PULLUP);
+
+  attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_1A), encoderISR_1A, RISING);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_1B), encoderISR_1B, RISING);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_2A), encoderISR_2A, RISING);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_PIN_2B), encoderISR_2B, RISING);
+
+  Wire1.begin();
+  mc.setBus(&Wire1);
+
+  mc.reinitialize();
+  mc.disableCrc();
+  mc.clearResetFlag();
   mc.disableCommandTimeout();
-  mc.setMaxAcceleration(1, 200);
-  mc.setMaxDeceleration(1, 300);
-  mc.setMaxAcceleration(2, 200);
-  mc.setMaxDeceleration(2, 300);
+  mc.clearMotorFaultUnconditional();
 
-  // encoder interrupts
-  pinMode(encoder1APin, INPUT_PULLUP);
-  pinMode(encoder1BPin, INPUT_PULLUP);
-  pinMode(encoder2APin, INPUT_PULLUP);
-  pinMode(encoder2BPin, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(encoder1APin), countEncoder1, RISING);
-  attachInterrupt(digitalPinToInterrupt(encoder1BPin), countEncoder2, RISING); 
-  attachInterrupt(digitalPinToInterrupt(encoder2APin), countEncoder1, RISING);
-  attachInterrupt(digitalPinToInterrupt(encoder2BPin), countEncoder2, RISING);
+  mc.setMaxAcceleration(1, 200);
+  mc.setMaxDeceleration(1, 200);
+  mc.setMaxAcceleration(2, 200);
+  mc.setMaxDeceleration(2, 200);
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-   // 1. Spin motors FORWARD at maximum speed
-  mc.setSpeed(1, 800); // Shield 1, Motor 1
-  mc.setSpeed(2, 800); // Shield 1, Motor 2
+  // 1. Spin motors FORWARD at maximum speed
+  mc.setSpeed(1, 800);
+  mc.setSpeed(2, -800);
   delay(2000); 
 
   // 2. Stop motors
@@ -50,13 +88,13 @@ void loop() {
   mc.setSpeed(2, 0);
   delay(1000); 
 
-  Serial.print(encoderCount1);
+  Serial.print(encoderCountLeft);
   Serial.print(" ");
-  Serial.println(encoderCount2);
+  Serial.println(encoderCountRight);
 
   // 3. Spin motors BACKWARD at maximum speed
-  mc.setSpeed(1, -800); // Shield 1, Motor 1
-  mc.setSpeed(2, -800); // Shield 1, Motor 2
+  mc.setSpeed(1, -800);
+  mc.setSpeed(2, -800);
   delay(2000); 
 
   // 4. Stop motors
@@ -64,12 +102,7 @@ void loop() {
   mc.setSpeed(2, 0);
   delay(1000);
 
-  Serial.print(encoderCount1);
+  Serial.print(encoderCountLeft);
   Serial.print(" ");
-  Serial.println(encoderCount2);
+  Serial.println(encoderCountRight);
 }
-
-void countEncoder1() { encoderCount1++; }
-void countEncoder2() { encoderCount2++; }
-
-

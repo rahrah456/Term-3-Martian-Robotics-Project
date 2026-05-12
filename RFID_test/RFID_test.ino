@@ -2,11 +2,11 @@
 #include <MFRC522_I2C.h>
 
 #define RFID_ADDR 0x28
-MFRC522_I2C rfid(RFID_ADDR, -1);
+MFRC522_I2C rfid(RFID_ADDR, -1, &Wire1);
 
 void setup() {
   Serial.begin(9600);
-  Wire.begin();
+  Wire1.begin();
   rfid.PCD_Init();
 }
 
