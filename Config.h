@@ -12,16 +12,20 @@ const int ENC_RIGHT_B = 5;
 
 // TODO: measure
 const float TICKS_PER_M = 1000.0;
-const float TRACK_WIDTH_MM = 150.0; // distance between tread centers
+const float TRACK_BASE_MM = 152.0; // distance between track centres
 
 // --- Ultrasonic Sensors ---
-// TODO: assign remaining pins once mounted
-const int UDS_CENTER_TRIG = 11;
-const int UDS_CENTER_ECHO = 12;
-// const int UDS_LEFT_TRIG = ?;
-// const int UDS_LEFT_ECHO = ?;
-// const int UDS_RIGHT_TRIG = ?;
-// const int UDS_RIGHT_ECHO = ?;
+// Mounting yaw: left = -32°, middle = 0°, right = +32° from forward
+const int UDS_LEFT_TRIG = 32;
+const int UDS_LEFT_ECHO = 33;
+const int UDS_MID_TRIG = 34;
+const int UDS_MID_ECHO = 35;
+const int UDS_RIGHT_TRIG = 36;
+const int UDS_RIGHT_ECHO = 37;
+
+const float UDS_LEFT_YAW = -32.0;
+const float UDS_MID_YAW = 0.0;
+const float UDS_RIGHT_YAW = 32.0;
 
 // --- IR Reflectance Array (9 sensors) ---
 const uint8_t IR_COUNT = 9;

@@ -19,6 +19,15 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: python dashboard.py <arduino_ip>")
         print("   or:  python dashboard.py <arduino_ip> <command>")
+        print()
+        print("Commands:")
+        print("  pid:line:<Kp>,<Ki>,<Kd>     set line-follow PID gains")
+        print("  pid:speed:<Kp>,<Ki>,<Kd>    set speed-control PID gains")
+        print("  pid:turn:<Kp>,<Ki>,<Kd>     set turn PID gains")
+        print("  stop                        engage kill switch")
+        print("  go                          disengage kill switch")
+        print("  status                      request telemetry")
+        print("  anything else               sent raw to Arduino")
         sys.exit(1)
 
     arduino_ip = sys.argv[1]
@@ -42,8 +51,6 @@ def main():
         return
 
     print(f"Connected to {arduino_ip}:{PORT}")
-    print("Commands: change_pid:<Kp>,<Ki>,<Kd>  |  stop  |  go  |  status  |  quit")
-    print("Anything else is sent raw to the Arduino.")
     print()
 
     while True:

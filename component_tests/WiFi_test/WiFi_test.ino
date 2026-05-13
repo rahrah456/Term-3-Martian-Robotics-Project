@@ -1,4 +1,4 @@
-#include <WiFiS3.h>
+#include <WiFi.h>
 #include <WiFiUdp.h>
 #include "arduino_secrets.h"
 
