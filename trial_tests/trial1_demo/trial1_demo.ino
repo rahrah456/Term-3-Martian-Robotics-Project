@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <MFRC522_I2C.h>
+#include <Servo.h>
 
 // --- Pins ---
 const int ENC_LA = 2, ENC_LB = 3, ENC_RA = 4, ENC_RB = 5;
@@ -14,19 +15,64 @@ const uint8_t IR_COUNT = 9;
 const uint8_t IR_PINS[] = {22, 23, 24, 25, 26, 27, 28, 29, 30};
 const int KILL_BTN = 38;
 const int ACT_LED = 39;
+const int SERVO_PIN = 31;
+
+// --- Seed dispenser angles (0 = closed, 1-5 = seed positions) ---
+const int SEED_ANGLES[] = {0, 25, 65, 105, 145, 180};
+const int SEED_COUNT = 6;
+
+// --- Robot constants ---
+const float TICKS_PER_M = 5360.0;
+const float TRACK_BASE_MM = 152.0;
+const long TICKS_10CM = 0.10 * TICKS_PER_M;        // 536
+const long TICKS_15CM = 0.15 * TICKS_PER_M;        // 804
+const long TICKS_TURN_90 = PI * TRACK_BASE_MM * 90.0 / 360.0 * TICKS_PER_M / 1000.0 / 3.0;  // ~213
+const long TICKS_TURN_180 = TICKS_TURN_90 * 2;      // ~427
 
 // --- Hardware objects ---
 MotoronI2C mc(0x10);
 WiFiUDP udp;
 MFRC522_I2C rfid(0x28, -1, &Wire1);
+Servo servo;
 
-// --- Encoder state ---
+// --- Global state ---
 volatile long encL = 0, encR = 0;
+bool killed = false;
 
 void isr_LA() { encL += (digitalRead(ENC_LA) == digitalRead(ENC_LB)) ? 1 : -1; }
 void isr_LB() { encL += (digitalRead(ENC_LA) != digitalRead(ENC_LB)) ? 1 : -1; }
 void isr_RA() { encR += (digitalRead(ENC_RA) == digitalRead(ENC_RB)) ? 1 : -1; }
 void isr_RB() { encR += (digitalRead(ENC_RA) != digitalRead(ENC_RB)) ? 1 : -1; }
+
+// --- E-Stop ---
+bool handleEStop() {
+  static bool lastBtn = HIGH;
+  static unsigned long debounce = 0;
+
+  bool btn = digitalRead(KILL_BTN);
+  if (btn == HIGH && lastBtn == LOW && millis() - debounce > 50) {
+    debounce = millis();
+    killed = !killed;
+    if (killed) {
+      setMotors(0, 0);
+      digitalWrite(ACT_LED, HIGH);
+      Serial.println("E-STOP engaged");
+    } else {
+      digitalWrite(ACT_LED, LOW);
+      Serial.println("E-STOP released");
+    }
+  }
+  lastBtn = btn;
+
+  return killed;
+}
+
+void waitForUnkill() {
+  while (killed) {
+    handleEStop();
+    delay(20);
+  }
+}
 
 // --- Motor helper (M2 polarity already flipped) ---
 void setMotors(int left, int right) {
@@ -101,6 +147,9 @@ void printMenu() {
   Serial.println("5 - Ultrasonic readout");
   Serial.println("6 - RFID readout");
   Serial.println("7 - Stream ALL sensors live");
+  Serial.println("8 - Servo position control");
+  Serial.println("9 - Speed/heading open loop");
+  Serial.println("s - Seed dispenser cycle");
   Serial.println("m - Show this menu");
   Serial.print("> ");
 }
@@ -153,6 +202,10 @@ void setup() {
   pinMode(UDS_MT, OUTPUT); pinMode(UDS_ME, INPUT);
   pinMode(UDS_RT, OUTPUT); pinMode(UDS_RE, INPUT);
 
+  // Servo
+  servo.attach(SERVO_PIN);
+  servo.write(0);
+
   // RFID
   rfid.PCD_Init();
 
@@ -164,7 +217,13 @@ void setup() {
 //   MAIN LOOP
 // ============================================================
 void loop() {
-  if (!Serial.available()) return;
+  handleEStop();
+
+  if (!Serial.available()) {
+    delay(20);
+    return;
+  }
+
   char c = Serial.read();
 
   switch (c) {
@@ -175,6 +234,9 @@ void loop() {
     case '5': demoUltrasonic();     break;
     case '6': demoRFID();           break;
     case '7': demoStreamAll();      break;
+    case '8': demoServo();          break;
+    case '9': demoOpenLoop();       break;
+    case 's': demoServoCycle();     break;
     case 'm': printMenu();          break;
   }
 }
@@ -186,9 +248,8 @@ void demoMechanicalKill() {
   Serial.println("\n--- Mechanical Kill Switch ---");
   Serial.println("Button toggles motors. 'x' to exit.");
 
-  bool running = false;
-  bool lastBtn = HIGH;
-  unsigned long debounceTime = 0;
+  killed = false;
+  digitalWrite(ACT_LED, LOW);
 
   while (true) {
     if (Serial.available() && Serial.read() == 'x') {
@@ -197,21 +258,8 @@ void demoMechanicalKill() {
       return;
     }
 
-    bool btn = digitalRead(KILL_BTN);
-    if (btn == HIGH && lastBtn == LOW && millis() - debounceTime > 50) {
-      debounceTime = millis();
-      running = !running;
-      if (running) {
-        setMotors(400, 400);
-        digitalWrite(ACT_LED, LOW);
-        Serial.println("RUNNING");
-      } else {
-        setMotors(0, 0);
-        digitalWrite(ACT_LED, HIGH);
-        Serial.println("STOPPED - LED flashing red");
-      }
-    }
-    lastBtn = btn;
+    if (handleEStop()) { setMotors(0, 0); waitForUnkill(); continue; }
+    setMotors(400, 400);
     delay(20);
   }
 }
@@ -251,6 +299,8 @@ void demoWiFiKill() {
   char buf[255];
 
   while (true) {
+    if (handleEStop()) { setMotors(0, 0); waitForUnkill(); setMotors(300, 300); continue; }
+
     if (Serial.available() && Serial.read() == 'x') {
       setMotors(0, 0);
       digitalWrite(ACT_LED, LOW);
@@ -326,30 +376,60 @@ struct PIDSpeed {
 PIDSpeed pidL(0.8, 0.15, 0.05);
 PIDSpeed pidR(0.8, 0.15, 0.05);
 
-void movePID(int targetL, int targetR, unsigned long ms) {
+void moveStraight(int speed, long ticks) {
   pidL.reset(encL);
   pidR.reset(encR);
+  long startL = encL, startR = encR;
+  unsigned long timeout = millis() + 10000;
+  bool timedOut = false;
 
-  unsigned long start = millis();
-  unsigned long lastPrint = 0;
-  unsigned long timeout = start + ms + 2000;
+  while (true) {
+    if (handleEStop()) { setMotors(0, 0); waitForUnkill(); break; }
+    if (millis() >= timeout) { timedOut = true; break; }
 
-  while (millis() - start < ms && millis() < timeout) {
-    int cmdL = pidL.update(encL, targetL);
-    int cmdR = pidR.update(encR, targetR);
+    int cmdL = pidL.update(encL, speed);
+    int cmdR = pidR.update(encR, speed);
     setMotors(cmdL, cmdR);
 
-    if (millis() - lastPrint > 1000) {
-      lastPrint = millis();
-      float dt = (micros() - pidL.lastMicros) / 1000000.0;
-      if (dt < 0.001) dt = 0.02;
-      Serial.print("  L:"); Serial.print((encL - pidL.lastEnc) / dt, 0);
-      Serial.print(" R:"); Serial.print((encR - pidR.lastEnc) / dt, 0);
-      Serial.print(" ticks/s  cmd:"); Serial.print(cmdL); Serial.print(","); Serial.println(cmdR);
-    }
+    if (abs(encL - startL) >= ticks && abs(encR - startR) >= ticks) break;
     delay(20);
   }
   setMotors(0, 0);
+  long mL = abs(encL - startL);
+  long mR = abs(encR - startR);
+  Serial.print("  L:"); Serial.print(mL); Serial.print("/"); Serial.print(ticks);
+  Serial.print("  R:"); Serial.print(mR); Serial.print("/"); Serial.print(ticks);
+  if (timedOut) Serial.print("  TIMEOUT");
+  else if (killed) Serial.print("  E-STOP");
+  Serial.println();
+}
+
+void turn(int dir, int speed, long ticks) {
+  pidL.reset(encL);
+  pidR.reset(encR);
+  long startL = encL, startR = encR;
+  unsigned long timeout = millis() + 10000;
+  bool timedOut = false;
+
+  while (true) {
+    if (handleEStop()) { setMotors(0, 0); waitForUnkill(); break; }
+    if (millis() >= timeout) { timedOut = true; break; }
+
+    int cmdL = pidL.update(encL, dir * speed);
+    int cmdR = pidR.update(encR, -dir * speed);
+    setMotors(cmdL, cmdR);
+
+    if (abs(encL - startL) >= ticks && abs(encR - startR) >= ticks) break;
+    delay(20);
+  }
+  setMotors(0, 0);
+  long mL = abs(encL - startL);
+  long mR = abs(encR - startR);
+  Serial.print("  L:"); Serial.print(mL); Serial.print("/"); Serial.print(ticks);
+  Serial.print("  R:"); Serial.print(mR); Serial.print("/"); Serial.print(ticks);
+  if (timedOut) Serial.print("  TIMEOUT");
+  else if (killed) Serial.print("  E-STOP");
+  Serial.println();
 }
 
 // ============================================================
@@ -357,40 +437,37 @@ void movePID(int targetL, int targetR, unsigned long ms) {
 // ============================================================
 void demoMotion() {
   Serial.println("\n--- Speed and Heading Control ---");
-  Serial.println("Forward 600 -> Forward 800 -> Back 600 -> Turn L -> Turn R -> U-turn");
+  Serial.println("Forward 15cm -> Back 15cm -> Turn L 90 -> Turn R 90 -> U-turn");
+  Serial.println("Ticks/m: 5360  Track base: 152mm");
   Serial.println("Place robot with space. Starting in 3s...");
   delay(3000);
 
   encL = 0; encR = 0;
 
-  Serial.print("Forward 600 (3s)");
-  movePID(600, 600, 3000);
-  Serial.print("  enc L:"); Serial.print(encL); Serial.print(" R:"); Serial.println(encR);
+  Serial.print("Forward 15cm");
+  moveStraight(800, TICKS_15CM);
+  if (killed) return;
   delay(1000);
 
-  Serial.print("Forward 800 (3s)");
-  movePID(800, 800, 3000);
-  Serial.print("  enc L:"); Serial.print(encL); Serial.print(" R:"); Serial.println(encR);
+  Serial.print("Backward 15cm");
+  moveStraight(-800, TICKS_15CM);
+  if (killed) return;
   delay(1000);
 
-  Serial.print("Backward 600 (3s)");
-  movePID(-600, -600, 3000);
-  Serial.print("  enc L:"); Serial.print(encL); Serial.print(" R:"); Serial.println(encR);
+  Serial.print("Turn left 90");
+  turn(1, 800, TICKS_TURN_90);
+  if (killed) return;
   delay(1000);
 
-  Serial.print("Turn left (-500, 500, 2s)");
-  movePID(-500, 500, 2000);
-  Serial.print("  enc L:"); Serial.print(encL); Serial.print(" R:"); Serial.println(encR);
+  Serial.print("Turn right 90");
+  turn(-1, 800, TICKS_TURN_90);
+  if (killed) return;
   delay(1000);
 
-  Serial.print("Turn right (500, -500, 2s)");
-  movePID(500, -500, 2000);
-  Serial.print("  enc L:"); Serial.print(encL); Serial.print(" R:"); Serial.println(encR);
+  Serial.print("U-turn 180");
+  turn(1, 800, TICKS_TURN_180);
+  if (killed) return;
   delay(1000);
-
-  Serial.print("U-turn (-500, 500, 4s)");
-  movePID(-500, 500, 4000);
-  Serial.print("  enc L:"); Serial.print(encL); Serial.print(" R:"); Serial.println(encR);
 
   Serial.println("Motion demo done");
 }
@@ -535,5 +612,120 @@ void demoRFID() {
       lastMsg = millis();
     }
     delay(200);
+  }
+}
+
+// ============================================================
+//   DEMO 8: SERVO POSITION CONTROL
+// ============================================================
+void demoServo() {
+  Serial.println("\n--- Servo Position Control ---");
+  Serial.println("Enter an angle (0-270) to move the servo.");
+  Serial.println("'x' to exit.");
+
+  servo.write(0);
+
+  while (true) {
+    if (handleEStop()) { waitForUnkill(); continue; }
+
+    if (Serial.available()) {
+      String line = Serial.readStringUntil('\n');
+      line.trim();
+      if (line == "x") return;
+
+      int angle = line.toInt();
+      if (angle >= 0 && angle <= 270) {
+        servo.write(angle);
+        Serial.print("Moved to ");
+        Serial.println(angle);
+      } else {
+        Serial.println("Enter 0-180");
+      }
+    }
+    delay(20);
+  }
+}
+
+// ============================================================
+//   DEMO 9: SPEED/HEADING OPEN LOOP
+// ============================================================
+void demoOpenLoop() {
+  Serial.println("\n--- Speed/Heading Open Loop ---");
+  Serial.println("Fwd 800 -> Fwd 600 -> Turn L -> Turn R -> U-turn");
+  Serial.println("Place robot with space. Starting in 3s...");
+  delay(3000);
+
+  auto runOL = [&](int left, int right, long targetTicks, const char* label) {
+    encL = 0; encR = 0;
+    unsigned long timeout = millis() + 10000;
+    bool timedOut = false;
+    setMotors(left, right);
+
+    while (true) {
+      if (handleEStop()) { setMotors(0, 0); waitForUnkill(); break; }
+      if (millis() >= timeout) { timedOut = true; break; }
+      if (abs(encL) >= targetTicks && abs(encR) >= targetTicks) break;
+      delay(20);
+    }
+    setMotors(0, 0);
+
+    Serial.print(label);
+    Serial.print("  L:"); Serial.print(abs(encL)); Serial.print("/"); Serial.print(targetTicks);
+    Serial.print("  R:"); Serial.print(abs(encR)); Serial.print("/"); Serial.print(targetTicks);
+    if (timedOut) Serial.print("  TIMEOUT");
+    else if (killed) Serial.print("  E-STOP");
+    Serial.println();
+  };
+
+  runOL(800, 800, TICKS_10CM, "Fwd 800");
+  if (killed) return;
+  delay(500);
+  runOL(-800, -800, TICKS_10CM, "Back 800");
+  if (killed) return;
+  delay(500);
+  runOL(600, 600, TICKS_10CM, "Fwd 600");
+  if (killed) return;
+  delay(500);
+  runOL(-800, 800, TICKS_TURN_90, "Turn left");
+  if (killed) return;
+  delay(500);
+  runOL(800, -800, TICKS_TURN_90, "Turn right");
+  if (killed) return;
+  delay(500);
+  runOL(-800, 800, TICKS_TURN_180, "U-turn");
+
+  if (!killed) Serial.println("Open loop demo done");
+}
+
+// ============================================================
+//   SEED DISPENSER CYCLE
+// ============================================================
+void demoServoCycle() {
+  Serial.println("\n--- Seed Dispenser ---");
+  Serial.println("Enter position 0-5 to move servo.");
+  Serial.println("  0 = closed");
+  Serial.println("  1-5 = seed positions");
+  Serial.println("'x' to exit.");
+
+  servo.write(0);
+
+  while (true) {
+    if (handleEStop()) { waitForUnkill(); continue; }
+
+    if (Serial.available()) {
+      String line = Serial.readStringUntil('\n');
+      line.trim();
+      if (line == "x") return;
+
+      int pos = line.toInt();
+      if (pos >= 0 && pos < SEED_COUNT) {
+        servo.write(SEED_ANGLES[pos]);
+        Serial.print("Position "); Serial.print(pos);
+        Serial.print(" ("); Serial.print(SEED_ANGLES[pos]); Serial.println("deg)");
+      } else {
+        Serial.print("Enter 0-"); Serial.println(SEED_COUNT - 1);
+      }
+    }
+    delay(20);
   }
 }

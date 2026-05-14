@@ -10,8 +10,7 @@ const int ENC_LEFT_B = 3;
 const int ENC_RIGHT_A = 4;
 const int ENC_RIGHT_B = 5;
 
-// TODO: measure
-const float TICKS_PER_M = 1000.0;
+const float TICKS_PER_M = 5360.0;
 const float TRACK_BASE_MM = 152.0; // distance between track centres
 
 // --- Ultrasonic Sensors ---
