@@ -8,11 +8,12 @@
 #include <MFRC522_I2C.h>
 #include <Servo.h>
 
+
 // --- Pins ---
 const int ENC_LA = 2, ENC_LB = 3, ENC_RA = 4, ENC_RB = 5;
 const int UDS_LT = 32, UDS_LE = 33, UDS_MT = 34, UDS_ME = 35, UDS_RT = 36, UDS_RE = 37;
 const uint8_t IR_COUNT = 9;
-const uint8_t IR_PINS[] = {22, 23, 24, 25, 26, 27, 28, 29, 30};
+const uint8_t IR_PINS[] = {30, 23, 24, 25, 26, 27, 28, 29, 22};
 const int KILL_BTN = 38;
 const int ACT_LED = 39;
 const int SERVO_PIN = 31;
@@ -74,6 +75,97 @@ void waitForUnkill() {
   }
 }
 
+// --- IMU (Adafruit libs) ---
+#include <Adafruit_LIS3MDL.h>
+#include <Adafruit_LSM6DS33.h>
+
+Adafruit_LIS3MDL mag;
+Adafruit_LSM6DS33 imu;
+float magHeading = 0.0;
+bool imuOK = false;
+bool lsmOK = false;
+
+void initIMU() {
+  Wire.begin();
+  Wire.setClock(100000);
+  delay(50);
+
+  // Diagnose what's on each bus
+  Serial.println("IMU scan:");
+  for (int bus = 0; bus <= 1; bus++) {
+    auto& w = (bus == 0) ? Wire : Wire1;
+    Serial.print(bus == 0 ? "  Wire:" : "  Wire1:");
+    for (byte addr = 1; addr < 127; addr++) {
+      w.beginTransmission(addr);
+      if (w.endTransmission() == 0) { Serial.print(" 0x"); Serial.print(addr, HEX); }
+    }
+    Serial.println();
+  }
+
+  if (!mag.begin_I2C(0x1E)) {
+    Serial.println("IMU: mag failed at 0x1E");
+    return;
+  }
+  mag.setPerformanceMode(LIS3MDL_ULTRAHIGHMODE);
+  mag.setDataRate(LIS3MDL_DATARATE_300_HZ);
+  mag.setRange(LIS3MDL_RANGE_4_GAUSS);
+
+  // LSM6 diagnostic
+  uint8_t who = 0;
+  Wire.beginTransmission(0x6B);
+  Wire.write(0x0F);
+  Wire.endTransmission();
+  Wire.requestFrom(0x6B, (uint8_t)1);
+  if (Wire.available()) who = Wire.read();
+  Serial.print("IMU: lsm6 WHO_AM_I = 0x"); Serial.println(who, HEX);
+  Serial.println("IMU: LSM6 not responding — using mag only");
+
+  imuOK = true;
+  Serial.println("IMU: OK (mag only)");
+}
+
+void readIMU() {
+  if (!imuOK) return;
+
+  sensors_event_t magEvent;
+  mag.getEvent(&magEvent);
+  float mx = magEvent.magnetic.x;
+  float my = magEvent.magnetic.y;
+  float mz = magEvent.magnetic.z;
+
+  if (lsmOK) {
+    sensors_event_t accelEvent, gyroEvent, tempEvent;
+    imu.getEvent(&accelEvent, &gyroEvent, &tempEvent);
+    float ax = accelEvent.acceleration.x;
+    float ay = accelEvent.acceleration.y;
+    float az = accelEvent.acceleration.z;
+
+    float normA = sqrt(ax*ax + ay*ay + az*az);
+    if (normA > 1) {
+      ax /= normA; ay /= normA; az /= normA;
+      float ex = ay*mz - az*my;
+      float ey = az*mx - ax*mz;
+      float ez = ax*my - ay*mx;
+      float normE = sqrt(ex*ex + ey*ey + ez*ez);
+      if (normE > 1) {
+        ex /= normE; ey /= normE; ez /= normE;
+        float nx = ay*ez - az*ey;
+        float ny = az*ex - ax*ez;
+        float nz = ax*ey - ay*ex;
+        float h = atan2(ex, nx) * 180 / PI;
+        if (h < 0) h += 360;
+        magHeading = h;
+        return;
+      }
+    }
+  }
+
+  // Fallback: simple heading (no tilt compensation)
+  float h = atan2(my, mx) * 180 / PI;
+  if (h < 0) h += 360;
+  magHeading = h;
+}
+
 // --- Motor helper (M2 polarity already flipped) ---
 void setMotors(int left, int right) {
   mc.setSpeed(1, left);
@@ -110,6 +202,8 @@ void readIR(uint16_t vals[]) {
     }
   }
 }
+
+
 
 int irCentroid(uint16_t vals[]) {
   uint32_t sum = 0, weighted = 0;
@@ -149,6 +243,7 @@ void printMenu() {
   Serial.println("7 - Stream ALL sensors live");
   Serial.println("8 - Servo position control");
   Serial.println("9 - Speed/heading open loop");
+  Serial.println("0 - IMU heading readout");
   Serial.println("s - Seed dispenser cycle");
   Serial.println("m - Show this menu");
   Serial.print("> ");
@@ -206,6 +301,9 @@ void setup() {
   servo.attach(SERVO_PIN);
   servo.write(0);
 
+  // IMU (init done inside initIMU)
+  initIMU();
+
   // RFID
   rfid.PCD_Init();
 
@@ -236,6 +334,7 @@ void loop() {
     case '7': demoStreamAll();      break;
     case '8': demoServo();          break;
     case '9': demoOpenLoop();       break;
+    case '0': demoIMU();            break;
     case 's': demoServoCycle();     break;
     case 'm': printMenu();          break;
   }
@@ -477,13 +576,13 @@ void demoMotion() {
 // ============================================================
 void demoIR() {
   Serial.println("\n--- IR Reflectance Array ---");
-  Serial.println("S0\tS1\tS2\tS3\tS4\tS5\tS6\tS7\tS8\t| Centroid");
-  Serial.println("'x' to exit.");
+  Serial.println("S0\tS1\tS2\tS3\tS4\tS5\tS6\tS7\tS8");
+  // Serial.println("'x' to exit.");
 
   uint16_t vals[IR_COUNT];
-  unsigned long lastHead = 0;
 
   while (true) {
+    if (handleEStop()) { waitForUnkill(); continue; }
     if (Serial.available() && Serial.read() == 'x') return;
 
     readIR(vals);
@@ -491,19 +590,7 @@ void demoIR() {
       Serial.print(vals[i]);
       Serial.print("\t");
     }
-
-    int pos = irCentroid(vals);
-    if (pos >= 0) {
-      Serial.print("| ");
-      Serial.println(pos);
-    } else {
-      Serial.println("| no line");
-    }
-
-    if (millis() - lastHead > 5000) {
-      lastHead = millis();
-      Serial.println("S0\tS1\tS2\tS3\tS4\tS5\tS6\tS7\tS8\t| Centroid");
-    }
+    Serial.println();
     delay(100);
   }
 }
@@ -519,6 +606,7 @@ void demoUltrasonic() {
   unsigned long lastHead = 0;
 
   while (true) {
+    if (handleEStop()) { waitForUnkill(); continue; }
     if (Serial.available() && Serial.read() == 'x') return;
 
     long l = readUDS(UDS_LT, UDS_LE);
@@ -551,6 +639,7 @@ void demoStreamAll() {
   unsigned long lastHead = 0;
 
   while (true) {
+    if (handleEStop()) { waitForUnkill(); continue; }
     if (Serial.available() && Serial.read() == 'x') return;
 
     // IR
@@ -599,6 +688,7 @@ void demoRFID() {
   unsigned long lastMsg = 0;
 
   while (true) {
+    if (handleEStop()) { waitForUnkill(); continue; }
     if (Serial.available() && Serial.read() == 'x') return;
 
     if (readRFID(uid, sizeof(uid))) {
@@ -727,5 +817,32 @@ void demoServoCycle() {
       }
     }
     delay(20);
+  }
+}
+
+// ============================================================
+//   DEMO 0: IMU HEADING READOUT
+// ============================================================
+void demoIMU() {
+  Serial.println("\n--- IMU Heading ---");
+
+  if (!imuOK) {
+    Serial.println("IMU not initialised — check wiring and restart");
+    return;
+  }
+
+  Serial.println("Heading(deg)  MagX  MagY  MagZ  AccX  AccY  AccZ");
+  Serial.println("'x' to exit.");
+
+  while (true) {
+    if (handleEStop()) { waitForUnkill(); continue; }
+    if (Serial.available() && Serial.read() == 'x') return;
+
+    readIMU();
+
+    Serial.print(magHeading, 1); Serial.print(" deg");
+    Serial.println();
+
+    delay(200);
   }
 }

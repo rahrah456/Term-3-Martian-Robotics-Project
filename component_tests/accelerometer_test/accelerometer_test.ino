@@ -6,6 +6,8 @@ LSM6 imu;
 void setup() {
   Serial.begin(115200);
   Wire.begin();
+  Wire.setClock(10000);
+  delay(100);
 
   if (!imu.init()) {
     Serial.println("Failed to detect LSM6DS33!");
