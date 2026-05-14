@@ -137,10 +137,10 @@ void setup() {
   mc.clearResetFlag();
   mc.disableCommandTimeout();
   mc.clearMotorFaultUnconditional();
-  mc.setMaxAcceleration(1, 200);
-  mc.setMaxDeceleration(1, 200);
-  mc.setMaxAcceleration(2, 200);
-  mc.setMaxDeceleration(2, 200);
+  mc.setMaxAcceleration(1, 800);
+  mc.setMaxDeceleration(1, 800);
+  mc.setMaxAcceleration(2, 800);
+  mc.setMaxDeceleration(2, 800);
   setMotors(0, 0);
 
   // Kill switch / LED
@@ -293,44 +293,106 @@ void demoWiFiKill() {
 }
 
 // ============================================================
+//   PID SPEED CONTROLLER
+// ============================================================
+struct PIDSpeed {
+  float integral, prevErr, kp, ki, kd;
+  unsigned long lastMicros;
+  long lastEnc;
+
+  PIDSpeed(float p, float i, float d) : integral(0), prevErr(0), kp(p), ki(i), kd(d), lastMicros(0), lastEnc(0) {}
+
+  void reset(long encNow) {
+    integral = 0; prevErr = 0; lastEnc = encNow; lastMicros = micros();
+  }
+
+  int update(long encNow, int target) {
+    unsigned long now = micros();
+    float dt = (now - lastMicros) / 1000000.0;
+    if (dt <= 0 || dt > 0.05) dt = 0.02;
+    float actual = (encNow - lastEnc) / dt;
+    lastEnc = encNow;
+    lastMicros = now;
+
+    float err = target - actual;
+    integral += err * dt;
+    integral = constrain(integral, -400, 400);
+    float deriv = (err - prevErr) / dt;
+    prevErr = err;
+    return constrain(kp * err + ki * integral + kd * deriv, -800, 800);
+  }
+};
+
+PIDSpeed pidL(0.8, 0.15, 0.05);
+PIDSpeed pidR(0.8, 0.15, 0.05);
+
+void movePID(int targetL, int targetR, unsigned long ms) {
+  pidL.reset(encL);
+  pidR.reset(encR);
+
+  unsigned long start = millis();
+  unsigned long lastPrint = 0;
+  unsigned long timeout = start + ms + 2000;
+
+  while (millis() - start < ms && millis() < timeout) {
+    int cmdL = pidL.update(encL, targetL);
+    int cmdR = pidR.update(encR, targetR);
+    setMotors(cmdL, cmdR);
+
+    if (millis() - lastPrint > 1000) {
+      lastPrint = millis();
+      float dt = (micros() - pidL.lastMicros) / 1000000.0;
+      if (dt < 0.001) dt = 0.02;
+      Serial.print("  L:"); Serial.print((encL - pidL.lastEnc) / dt, 0);
+      Serial.print(" R:"); Serial.print((encR - pidR.lastEnc) / dt, 0);
+      Serial.print(" ticks/s  cmd:"); Serial.print(cmdL); Serial.print(","); Serial.println(cmdR);
+    }
+    delay(20);
+  }
+  setMotors(0, 0);
+}
+
+// ============================================================
 //   DEMO 3: SPEED AND HEADING CONTROL
 // ============================================================
 void demoMotion() {
   Serial.println("\n--- Speed and Heading Control ---");
-  Serial.println("Forward -> Backward -> Turn L -> Turn R -> U-turn");
+  Serial.println("Forward 600 -> Forward 800 -> Back 600 -> Turn L -> Turn R -> U-turn");
   Serial.println("Place robot with space. Starting in 3s...");
   delay(3000);
 
-  setMotors(400, 400);
-  Serial.print("Forward 400"); printEncDelay(2000);
+  encL = 0; encR = 0;
 
-  setMotors(800, 800);
-  Serial.print("Forward 800"); printEncDelay(2000);
-
-  setMotors(-600, -600);
-  Serial.print("Backward 600"); printEncDelay(2000);
-
-  setMotors(-400, 400);
-  Serial.print("Turn left 90"); printEncDelay(900);
-
-  setMotors(400, -400);
-  Serial.print("Turn right 90"); printEncDelay(900);
-
-  setMotors(-400, 400);
-  Serial.print("U-turn 180"); printEncDelay(1800);
-
-  setMotors(0, 0);
-  Serial.println("Motion demo done");
-}
-
-void printEncDelay(unsigned long ms) {
-  delay(ms);
-  setMotors(0, 0);
-  Serial.print("  enc L:");
-  Serial.print(encL);
-  Serial.print(" R:");
-  Serial.println(encR);
+  Serial.print("Forward 600 (3s)");
+  movePID(600, 600, 3000);
+  Serial.print("  enc L:"); Serial.print(encL); Serial.print(" R:"); Serial.println(encR);
   delay(1000);
+
+  Serial.print("Forward 800 (3s)");
+  movePID(800, 800, 3000);
+  Serial.print("  enc L:"); Serial.print(encL); Serial.print(" R:"); Serial.println(encR);
+  delay(1000);
+
+  Serial.print("Backward 600 (3s)");
+  movePID(-600, -600, 3000);
+  Serial.print("  enc L:"); Serial.print(encL); Serial.print(" R:"); Serial.println(encR);
+  delay(1000);
+
+  Serial.print("Turn left (-500, 500, 2s)");
+  movePID(-500, 500, 2000);
+  Serial.print("  enc L:"); Serial.print(encL); Serial.print(" R:"); Serial.println(encR);
+  delay(1000);
+
+  Serial.print("Turn right (500, -500, 2s)");
+  movePID(500, -500, 2000);
+  Serial.print("  enc L:"); Serial.print(encL); Serial.print(" R:"); Serial.println(encR);
+  delay(1000);
+
+  Serial.print("U-turn (-500, 500, 4s)");
+  movePID(-500, 500, 4000);
+  Serial.print("  enc L:"); Serial.print(encL); Serial.print(" R:"); Serial.println(encR);
+
+  Serial.println("Motion demo done");
 }
 
 // ============================================================
