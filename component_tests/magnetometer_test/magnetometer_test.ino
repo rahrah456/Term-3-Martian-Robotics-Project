@@ -33,6 +33,11 @@ void setup()
   Serial.begin(9600);
   Wire.begin();
 
+  while (!Serial)
+  {
+    delay(10);
+  }
+  
   if (!mag.init())
   {
     Serial.println("Failed to detect and initialize LIS3MDL magnetometer!");

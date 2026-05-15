@@ -76,92 +76,89 @@ void waitForUnkill() {
 }
 
 // --- IMU (Adafruit libs) ---
-#include <Adafruit_LIS3MDL.h>
-#include <Adafruit_LSM6DS33.h>
+#include <LIS3MDL.h>
+#include <LSM6.h>
 
-Adafruit_LIS3MDL mag;
-Adafruit_LSM6DS33 imu;
+LIS3MDL mag;
+LSM6 imu;
 float magHeading = 0.0;
+float magGaussX = 0, magGaussY = 0, magGaussZ = 0;
+float accGX = 0, accGY = 0, accGZ = 0;
 bool imuOK = false;
-bool lsmOK = false;
+
+const float MAG_SCALE = 1.0 / 146.0; // LSB to gauss at ±4 gauss
+const float ACC_SCALE = 1.0 / 16384.0; // LSB to g at ±2g
+
+// Calibration values — run the LIS3MDL Calibrate example, rotate the IMU in all
+// directions for 30s, then replace these with the printed min/max values.
+// This corrects for magnetic interference from motors/wiring (hard iron).
+int16_t magMinX = -8808, magMinY = 3318, magMinZ = -521; // min: { -8808,  +3318,   -521}
+int16_t magMaxX = -3540, magMaxY = 9119, magMaxZ = 5024; // max: { -3540,  +9119,  +5024}
+
+
 
 void initIMU() {
   Wire.begin();
   Wire.setClock(100000);
   delay(50);
 
-  // Diagnose what's on each bus
-  Serial.println("IMU scan:");
-  for (int bus = 0; bus <= 1; bus++) {
-    auto& w = (bus == 0) ? Wire : Wire1;
-    Serial.print(bus == 0 ? "  Wire:" : "  Wire1:");
-    for (byte addr = 1; addr < 127; addr++) {
-      w.beginTransmission(addr);
-      if (w.endTransmission() == 0) { Serial.print(" 0x"); Serial.print(addr, HEX); }
-    }
-    Serial.println();
-  }
-
-  if (!mag.begin_I2C(0x1E)) {
-    Serial.println("IMU: mag failed at 0x1E");
+  if (!mag.init()) {
+    Serial.println("IMU: mag init failed");
     return;
   }
-  mag.setPerformanceMode(LIS3MDL_ULTRAHIGHMODE);
-  mag.setDataRate(LIS3MDL_DATARATE_300_HZ);
-  mag.setRange(LIS3MDL_RANGE_4_GAUSS);
+  mag.enableDefault();
 
-  // LSM6 diagnostic
-  uint8_t who = 0;
-  Wire.beginTransmission(0x6B);
-  Wire.write(0x0F);
-  Wire.endTransmission();
-  Wire.requestFrom(0x6B, (uint8_t)1);
-  if (Wire.available()) who = Wire.read();
-  Serial.print("IMU: lsm6 WHO_AM_I = 0x"); Serial.println(who, HEX);
-  Serial.println("IMU: LSM6 not responding — using mag only");
+  if (!imu.init()) {
+    Serial.println("IMU: lsm6 init failed");
+    return;
+  }
+  imu.enableDefault();
 
   imuOK = true;
-  Serial.println("IMU: OK (mag only)");
+  Serial.println("IMU: OK");
 }
 
 void readIMU() {
   if (!imuOK) return;
 
-  sensors_event_t magEvent;
-  mag.getEvent(&magEvent);
-  float mx = magEvent.magnetic.x;
-  float my = magEvent.magnetic.y;
-  float mz = magEvent.magnetic.z;
+  mag.read();
+  imu.read();
 
-  if (lsmOK) {
-    sensors_event_t accelEvent, gyroEvent, tempEvent;
-    imu.getEvent(&accelEvent, &gyroEvent, &tempEvent);
-    float ax = accelEvent.acceleration.x;
-    float ay = accelEvent.acceleration.y;
-    float az = accelEvent.acceleration.z;
+  // Scaled values for display
+  magGaussX = mag.m.x * MAG_SCALE;
+  magGaussY = mag.m.y * MAG_SCALE;
+  magGaussZ = mag.m.z * MAG_SCALE;
+  accGX = imu.a.x * ACC_SCALE;
+  accGY = imu.a.y * ACC_SCALE;
+  accGZ = imu.a.z * ACC_SCALE;
 
-    float normA = sqrt(ax*ax + ay*ay + az*az);
-    if (normA > 1) {
-      ax /= normA; ay /= normA; az /= normA;
-      float ex = ay*mz - az*my;
-      float ey = az*mx - ax*mz;
-      float ez = ax*my - ay*mx;
-      float normE = sqrt(ex*ex + ey*ey + ez*ez);
-      if (normE > 1) {
-        ex /= normE; ey /= normE; ez /= normE;
-        float nx = ay*ez - az*ey;
-        float ny = az*ex - ax*ez;
-        float nz = ax*ey - ay*ex;
-        float h = atan2(ex, nx) * 180 / PI;
-        if (h < 0) h += 360;
-        magHeading = h;
-        return;
-      }
-    }
-  }
+  // Heading from raw values with hard-iron correction
+  // Apply mounting orientation: swap which axis is "forward"
+  float mx = mag.m.x - ((int32_t)magMinX + magMaxX) / 2.0;
+  float my = mag.m.y - ((int32_t)magMinY + magMaxY) / 2.0;
+  float mz = mag.m.z - ((int32_t)magMinZ + magMaxZ) / 2.0;
 
-  // Fallback: simple heading (no tilt compensation)
-  float h = atan2(my, mx) * 180 / PI;
+  // Accelerometer — normalize to get gravity direction
+  float ax = imu.a.x, ay = imu.a.y, az = imu.a.z;
+  float normA = sqrt(ax*ax + ay*ay + az*az);
+  if (normA < 1) return;
+  ax /= normA; ay /= normA; az /= normA;
+
+  // East = cross(M, gravity), normalized
+  float ex = ay*mz - az*my;
+  float ey = az*mx - ax*mz;
+  float ez = ax*my - ay*mx;
+  float normE = sqrt(ex*ex + ey*ey + ez*ez);
+  if (normE < 1) return;
+  ex /= normE; ey /= normE; ez /= normE;
+
+  // North = cross(gravity, East), normalized
+  float nx = ay*ez - az*ey;
+  float ny = az*ex - ax*ez;
+  float nz = ax*ey - ay*ex;
+
+  // Heading: angle between North and forward (+X) in horizontal plane
+  float h = atan2(ex, nx) * 180 / PI;
   if (h < 0) h += 360;
   magHeading = h;
 }
@@ -831,8 +828,13 @@ void demoIMU() {
     return;
   }
 
-  Serial.println("Heading(deg)  MagX  MagY  MagZ  AccX  AccY  AccZ");
+  Serial.println("AccX(g)\tAccY(g)\tAccZ(g)\tMagX\tMagY\tMagZ\tHeading(deg)");
   Serial.println("'x' to exit.");
+
+  auto pf = [](float v, int w, int d) {
+    char b[16]; sprintf(b, "%*.*f", w, d, v); Serial.print(b);
+  };
+  unsigned long lastHead = 0;
 
   while (true) {
     if (handleEStop()) { waitForUnkill(); continue; }
@@ -840,9 +842,14 @@ void demoIMU() {
 
     readIMU();
 
-    Serial.print(magHeading, 1); Serial.print(" deg");
-    Serial.println();
+    pf(accGX, 7, 3); pf(accGY, 7, 3); pf(accGZ, 7, 3);
+    pf(magGaussX, 6, 1); pf(magGaussY, 6, 1); pf(magGaussZ, 6, 1);
+    pf(magHeading, 6, 1); Serial.println();
 
+    if (millis() - lastHead > 5000) {
+      lastHead = millis();
+      Serial.println("AccX(g)\tAccY(g)\tAccZ(g)\tMagX\tMagY\tMagZ\tHeading(deg)");
+    }
     delay(200);
   }
 }
