@@ -1,3 +1,102 @@
+#include <Wire.h>
+#include <Motoron.h>
+
+// --- Pins ---
+const int ENC_LA = 2, ENC_LB = 3, ENC_RA = 4, ENC_RB = 5;
+const int UDS_MID_TRIG = 34;
+const int UDS_MID_ECHO = 35;
+const int KILL_BTN = 38;
+
+// --- Globals ---
+volatile long encL = 0, encR = 0;
+bool killed = false;
+MotoronI2C mc(0x10);
+
+// --- Encoder ISRs ---
+void isr_LA() { encL += (digitalRead(ENC_LA) == digitalRead(ENC_LB)) ? 1 : -1; }
+void isr_LB() { encL += (digitalRead(ENC_LA) != digitalRead(ENC_LB)) ? 1 : -1; }
+void isr_RA() { encR += (digitalRead(ENC_RA) == digitalRead(ENC_RB)) ? 1 : -1; }
+void isr_RB() { encR += (digitalRead(ENC_RA) != digitalRead(ENC_RB)) ? 1 : -1; }
+
+// --- Motor helper ---
+void setMotors(int left, int right) {
+  mc.setSpeed(1, left);
+  mc.setSpeed(2, -right);
+}
+
+// --- E-Stop ---
+bool handleEStop() {
+  static bool lastBtn = HIGH;
+  static unsigned long debounce = 0;
+
+  bool btn = digitalRead(KILL_BTN);
+  if (btn == HIGH && lastBtn == LOW && millis() - debounce > 50) {
+    debounce = millis();
+    killed = !killed;
+    if (killed) {
+      setMotors(0, 0);
+      Serial.println("E-STOP engaged");
+    } else {
+      Serial.println("E-STOP released");
+    }
+  }
+  lastBtn = btn;
+  return killed;
+}
+
+void waitForUnkill() {
+  while (killed) {
+    handleEStop();
+    delay(20);
+  }
+}
+
+// --- PID speed controller ---
+struct PIDSpeed {
+  float integral, prevErr, kp, ki, kd;
+  unsigned long lastMicros;
+  long lastEnc;
+
+  PIDSpeed(float p, float i, float d) : integral(0), prevErr(0), kp(p), ki(i), kd(d), lastMicros(0), lastEnc(0) {}
+
+  void reset(long encNow) {
+    integral = 0; prevErr = 0; lastEnc = encNow; lastMicros = micros();
+  }
+
+  int update(long encNow, int target) {
+    unsigned long now = micros();
+    float dt = (now - lastMicros) / 1000000.0;
+    if (dt <= 0 || dt > 0.05) dt = 0.02;
+    float actual = (encNow - lastEnc) / dt;
+    lastEnc = encNow;
+    lastMicros = now;
+
+    float err = target - actual;
+    integral += err * dt;
+    integral = constrain(integral, -400, 400);
+    float deriv = (err - prevErr) / dt;
+    prevErr = err;
+    return constrain(kp * err + ki * integral + kd * deriv, -800, 800);
+  }
+};
+
+PIDSpeed pidL(0.8, 0.15, 0.05);
+PIDSpeed pidR(0.8, 0.15, 0.05);
+
+// --- Ultrasonic read ---
+long readUDS(int trig, int echo) {
+  digitalWrite(trig, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trig, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trig, LOW);
+  long us = pulseIn(echo, HIGH, 30000);
+  return (us == 0) ? 999 : us / 58;
+}
+
+// Default UDS read (middle sensor)
+long readUDS() { return readUDS(UDS_MID_TRIG, UDS_MID_ECHO); }
+
 // ============================================================
 //   WALL FOLLOWING  —  cascaded PID
 //   Sensor mounted at 58° to wall (right side assumed)
@@ -103,4 +202,54 @@ void wallFollow(int baseSpeed) {
         delay(20);   // 50 Hz — matches your existing loop rate
     }
     setMotors(0, 0);
+}
+
+// ============================================================
+//   SETUP
+// ============================================================
+void setup() {
+  Serial.begin(9600);
+  delay(1500);
+
+  // Encoder ISRs
+  pinMode(ENC_LA, INPUT_PULLUP); attachInterrupt(digitalPinToInterrupt(ENC_LA), isr_LA, RISING);
+  pinMode(ENC_LB, INPUT_PULLUP); attachInterrupt(digitalPinToInterrupt(ENC_LB), isr_LB, RISING);
+  pinMode(ENC_RA, INPUT_PULLUP); attachInterrupt(digitalPinToInterrupt(ENC_RA), isr_RA, RISING);
+  pinMode(ENC_RB, INPUT_PULLUP); attachInterrupt(digitalPinToInterrupt(ENC_RB), isr_RB, RISING);
+
+  pinMode(UDS_MID_TRIG, OUTPUT);
+  pinMode(UDS_MID_ECHO, INPUT);
+  pinMode(KILL_BTN, INPUT_PULLUP);
+
+  Wire1.begin();
+  mc.setBus(&Wire1);
+  mc.reinitialize();
+  mc.disableCrc();
+  mc.clearResetFlag();
+  mc.disableCommandTimeout();
+  mc.clearMotorFaultUnconditional();
+  mc.setMaxAcceleration(1, 800);
+  mc.setMaxDeceleration(1, 800);
+  mc.setMaxAcceleration(2, 800);
+  mc.setMaxDeceleration(2, 800);
+  setMotors(0, 0);
+
+  Serial.println("Wall Following PID ready");
+  Serial.print("Enter base speed (0-1023): ");
+}
+
+// ============================================================
+//   LOOP
+// ============================================================
+void loop() {
+  if (Serial.available()) {
+    int speed = Serial.parseInt();
+    // consume trailing newline so wallFollow() doesn't bail immediately
+    while (Serial.available()) Serial.read();
+    if (speed > 0 && speed <= 1023) {
+      wallFollow(speed);
+    }
+    Serial.print("Enter base speed (0-1023): ");
+  }
+  delay(20);
 }

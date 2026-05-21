@@ -44,26 +44,34 @@ void setup() {
 }
 
 void loop() {
-  // 0s-3s: idle at 0
-  setMotors(0, 0);
-  for (int i = 0; i < 3; i++) {
-    Serial.print(millis() / 1000); Serial.print("\t0\t");
-    Serial.print(encL); Serial.print("\t"); Serial.println(encR);
-    delay(1000);
-  }
+  // // 0s-3s: idle at 0
+  // setMotors(0, 0);
+  // for (int i = 0; i < 3; i++) {
+  //   Serial.print(millis() / 1000); Serial.print("\t0\t");
+  //   Serial.print(encL); Serial.print("\t"); Serial.println(encR);
+  //   delay(1000);
+  // }
 
-  // 3s-18s: ramp 0 -> 800 over 15s
-  for (int p = 0; p <= 800; p++) {
-    setMotors(p, p);
-    delay(15000.0 / 800.0);
-    if (p == 0 || p == 800 || p % 50 == 0) {
-      Serial.print(millis() / 1000); Serial.print("\t"); Serial.print(p); Serial.print("\t");
-      Serial.print(encL); Serial.print("\t"); Serial.println(encR);
-    }
-  }
+  // // 3s-18s: ramp 600 -> 800 over 15s
+  // for (int p = 600; p <= 800; p++) {
+  //   setMotors(p, p);
+  //   delay(1.5*15000.0 / 800.0);
+  //   if (p == 0 || p == 800 || p % 50 == 0) {
+  //     Serial.print(millis() / 1000); Serial.print("\t"); Serial.print(p); Serial.print("\t");
+  //     Serial.print(encL); Serial.print("\t"); Serial.println(encR);
+  //   }
+  // }
 
-  // 18s-21s: hold at 800
-  for (int i = 0; i < 3; i++) {
+  // setMotors(600, 600);
+  // // 18s-27s: hold at 600
+  // for (int i = 0; i < 15; i++) {
+  //   Serial.print(millis() / 1000); Serial.print("\t800\t");
+  //   Serial.print(encL); Serial.print("\t"); Serial.println(encR);
+  //   delay(1000);
+  // }
+  setMotors(500, 500);
+  // 18s-27s: hold at 600
+  for (int i = 0; i < 15; i++) {
     Serial.print(millis() / 1000); Serial.print("\t800\t");
     Serial.print(encL); Serial.print("\t"); Serial.println(encR);
     delay(1000);

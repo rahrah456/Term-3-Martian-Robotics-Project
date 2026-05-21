@@ -12,11 +12,16 @@
 // --- Pins ---
 const int ENC_LA = 2, ENC_LB = 3, ENC_RA = 4, ENC_RB = 5;
 const int UDS_LT = 32, UDS_LE = 33, UDS_MT = 34, UDS_ME = 35, UDS_RT = 36, UDS_RE = 37;
-const uint8_t IR_COUNT = 9;
-const uint8_t IR_PINS[] = {30, 23, 24, 25, 26, 27, 28, 29, 22};
 const int KILL_BTN = 38;
 const int ACT_LED = 39;
 const int SERVO_PIN = 31;
+// IR Sensor config
+const uint8_t IR_COUNT = 9;
+const uint8_t IR_PINS[] = {30, 23, 24, 25, 26, 27, 28, 29, 22};
+const int IR_EMITTER_1 = 40;
+const int IR_EMITTER_2 = 41;
+const int TIMEOUT = 2500;
+
 
 // --- Seed dispenser angles (0 = closed, 1-5 = seed positions) ---
 const int SEED_ANGLES[] = {0, 25, 65, 105, 145, 180};
@@ -78,6 +83,9 @@ void waitForUnkill() {
 // --- IMU (Adafruit libs) ---
 #include <LIS3MDL.h>
 #include <LSM6.h>
+
+uint16_t myMins[9] = { 57, 31, 29, 26, 36, 44, 58, 81, 111 };
+uint16_t myMaxs[9] = { 1577, 1173, 1067, 946, 946, 974, 998, 1173, 1501 };
 
 LIS3MDL mag;
 LSM6 imu;
@@ -180,27 +188,74 @@ long readUDS(int trig, int echo) {
   return (us == 0) ? 999 : us / 58;
 }
 
-void readIR(uint16_t vals[]) {
+// Reads the raw microsecond discharge time of all 9 pins simultaneously
+void readRawIR(uint16_t* rawVals) {
+  // 1. Set all to OUTPUT and HIGH to charge the capacitors
   for (uint8_t i = 0; i < IR_COUNT; i++) {
     pinMode(IR_PINS[i], OUTPUT);
     digitalWrite(IR_PINS[i], HIGH);
+    rawVals[i] = TIMEOUT; // Default to max timeout
   }
-  delayMicroseconds(10);
+  
+  delayMicroseconds(10); // Give them time to charge
+
+  // 2. Switch all to INPUT to let them discharge
   for (uint8_t i = 0; i < IR_COUNT; i++) {
     pinMode(IR_PINS[i], INPUT);
-    vals[i] = 1000;
   }
-  unsigned long start = micros();
-  while (micros() - start < 1000) {
+
+  // 3. Watch all 9 pins simultaneously until they go LOW
+  unsigned long startTime = micros();
+  uint8_t pinsLeft = IR_COUNT;
+
+  while (pinsLeft > 0) {
+    unsigned long elapsed = micros() - startTime;
+    if (elapsed >= TIMEOUT) break;
+
     for (uint8_t i = 0; i < IR_COUNT; i++) {
-      if (vals[i] == 1000 && digitalRead(IR_PINS[i]) == LOW) {
-        vals[i] = micros() - start;
+      // If this pin hasn't finished yet, check if it just went LOW
+      if (rawVals[i] == TIMEOUT && digitalRead(IR_PINS[i]) == LOW) {
+        rawVals[i] = elapsed;
+        pinsLeft--;
       }
     }
   }
 }
 
+// Replaces the library's readCalibrated() function
+void readIR(uint16_t vals[]) {
+  uint16_t rawOff[IR_COUNT];
+  uint16_t rawOn[IR_COUNT];
 
+  // 1. Emitters are currently OFF. Take the ambient light reading.
+  readRawIR(rawOff);
+
+  // 2. Turn emitters ON and wait for them to power up
+  digitalWrite(IR_EMITTER_1, HIGH);
+  digitalWrite(IR_EMITTER_2, HIGH);
+  delayMicroseconds(200); 
+
+  // 3. Take the reading with emitters ON (ambient + reflected IR)
+  readRawIR(rawOn);
+
+  // 4. Turn emitters OFF to save power
+  digitalWrite(IR_EMITTER_1, LOW);
+  digitalWrite(IR_EMITTER_2, LOW);
+
+  // 5. Apply ambient light cancellation and map to 0-1000
+  for (uint8_t i = 0; i < IR_COUNT; i++) {
+    // The official Pololu math for removing ambient light interference:
+    int32_t adjustedRaw = (int32_t)rawOn[i] + TIMEOUT - (int32_t)rawOff[i];
+    
+    // Prevent underflow/overflow bounds
+    if (adjustedRaw > TIMEOUT) adjustedRaw = TIMEOUT;
+    if (adjustedRaw < 0) adjustedRaw = 0;
+
+    // Map the adjusted raw value to your 0-1000 scale
+    long mapped = map(adjustedRaw, myMins[i], myMaxs[i], 0, 1000);
+    vals[i] = constrain(mapped, 0, 1000);
+  }
+}
 
 int irCentroid(uint16_t vals[]) {
   uint32_t sum = 0, weighted = 0;
@@ -288,6 +343,12 @@ void setup() {
   pinMode(KILL_BTN, INPUT_PULLUP);
   pinMode(ACT_LED, OUTPUT);
   digitalWrite(ACT_LED, LOW);
+
+  // IR sensors
+  pinMode(IR_EMITTER_1, OUTPUT);
+  pinMode(IR_EMITTER_2, OUTPUT);
+  digitalWrite(IR_EMITTER_1, LOW);
+  digitalWrite(IR_EMITTER_2, LOW);
 
   // Ultrasonic pins
   pinMode(UDS_LT, OUTPUT); pinMode(UDS_LE, INPUT);
@@ -576,7 +637,7 @@ void demoIR() {
   Serial.println("S0\tS1\tS2\tS3\tS4\tS5\tS6\tS7\tS8");
   // Serial.println("'x' to exit.");
 
-  uint16_t vals[IR_COUNT];
+  uint16_t vals[IR_COUNT] = {0};
 
   while (true) {
     if (handleEStop()) { waitForUnkill(); continue; }

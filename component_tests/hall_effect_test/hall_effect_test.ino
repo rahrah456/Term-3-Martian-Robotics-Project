@@ -1,4 +1,4 @@
-#define Hall_Sensor_Pin A0
+#define Hall_Sensor_Pin A5
 
 void setup() {
   Serial.begin(115200);
@@ -16,7 +16,7 @@ void loop() {
 
   Serial.print(avg);
   Serial.print(" | ");
-  Serial.println(avg > 860.04 ? "Seed detected" : "No seed");
+  Serial.println(avg > 962.04 ? "Seed detected" : "No seed");
 
   delay(100);
 }
