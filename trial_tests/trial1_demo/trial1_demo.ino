@@ -32,8 +32,8 @@ const float TICKS_PER_M = 5360.0;
 const float TRACK_BASE_MM = 152.0;
 const long TICKS_10CM = 0.10 * TICKS_PER_M;        // 536
 const long TICKS_15CM = 0.15 * TICKS_PER_M;        // 804
-const long TICKS_TURN_90 = PI * TRACK_BASE_MM * 90.0 / 360.0 * TICKS_PER_M / 1000.0 / 3.0;  // ~213
-const long TICKS_TURN_180 = TICKS_TURN_90 * 2;      // ~427
+const long TICKS_TURN_90 = PI * TRACK_BASE_MM * 90.0 / 360.0 * TICKS_PER_M / 1000.0 / 3.0 * 1.38;  // ~213*1.38
+const long TICKS_TURN_180 = TICKS_TURN_90 * 2;      // ~427*1.38
 
 // --- Hardware objects ---
 MotoronI2C mc(0x10);

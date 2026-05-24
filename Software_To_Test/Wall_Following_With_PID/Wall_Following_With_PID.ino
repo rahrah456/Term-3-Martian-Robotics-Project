@@ -11,6 +11,7 @@ const int KILL_BTN = 38;
 volatile long encL = 0, encR = 0;
 bool killed = false;
 MotoronI2C mc(0x10);
+const int MAX_MOTOR_POWER = 660;
 
 // --- Encoder ISRs ---
 void isr_LA() { encL += (digitalRead(ENC_LA) == digitalRead(ENC_LB)) ? 1 : -1; }

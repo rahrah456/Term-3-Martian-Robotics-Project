@@ -69,7 +69,7 @@ void loop() {
   //   Serial.print(encL); Serial.print("\t"); Serial.println(encR);
   //   delay(1000);
   // }
-  setMotors(500, 500);
+  setMotors(300, 300);
   // 18s-27s: hold at 600
   for (int i = 0; i < 15; i++) {
     Serial.print(millis() / 1000); Serial.print("\t800\t");
