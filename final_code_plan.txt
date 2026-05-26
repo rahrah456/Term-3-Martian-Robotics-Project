@@ -1,15 +1,54 @@
-Core 2 of the CPU will constantly read sensor values so we always have the most up to date values. and now
+Core 2 of the CPU will constantly read sensor values so we always have the most up to date values. It will also calculate their variances when relevant. This core also handles communication with the server. This is done via MQTT and the minimessages library detailed in WiFi_Kill_Swtich_MQTT. This will be kept flexible for future changes.
+The Magnetometer should only be used when the motors are off for best reliability.
 
-Core 1 of the CPU will handle everything else. It must use non-blocking code(?)
+
+Core 1 of the CPU will handle everything else.
 It will store a hardcoded version of the map.
 The control flow will consist of locating ourselves and mapping other robots.
 We will use primarily the motor encoders and the IMU to locate our ourself. When available we will use these to help locate as well: RFID reader, the IR sensor on lines, UDS on walls.
 We will use the UDS to map other robots.
 Then we have memory system based on the certainty we originally had and how long its been since we took the measurement for where other robots are and perhaps where we are.
 We will then decide on a path to go to deposit seeds.
-Then we deposit seeds by locating the hole with first RFID then IR. We use the IR to detect seed presence. and locate the centre of the hole. If unoccupied and the server says unoccupied, then deposit a seed.
-This core(?) also handles communication with the server.
+Then we deposit seeds by locating the hole with first RFID then IR. We use the IR to detect seed presence. and locate the centre of the hole. If unoccupied and the server says unoccupied, then deposit a seed. To ensure it is in the hole, we can drive forward and backwards a few times to make sure it has fallen in and isnt still in the dispensing chute.
+We will spin to gain more information of our surroundings when necessary.
+Additional missions: We will need to save robots when the server gives us the go ahead and we will need to use our light sensor to find the hole with the brightest light onin the arena. We will also need to let robots in the base as well since they cant get in without someone standing on an RFID tag within the base to let them in, so before we leave we will first let any robots in if they are requesting entry. For emergency calls, we will discuss and agree on a specific exit route plan so theres no traffic jam at the exit.
+We should always travel aligned to the grid or lines and never move in a diagonal to simplify obstacle avoidance. All robots will send their location, heading, next location, and whether they want to revive someone regularly. When visiting a hole, robots will send the fertility status and whether they've planted a seed there. Each robot will then be able to request this information from the server. We can use this to help map other robots positions, however many of them will be lost so we shouldnt trust this fully.
+
+There will be a dashboard which sends all the data to a laptop over MQTT so we can visualise the map and what the robot sees. We can also send commands back to tune the PIDs and run unit tests.
+The dashboard will have an intuitive html display showing each sensor output. The IR sensor will be a small line graph with the assumed centre marked and the classification shown. There will also be a map view showing the robots current state. The UDS detection cones will be visible and show where they are detecting something if they are. There should be warnings if sensors arent working (e.g. 1 IR sensor gets disconnected and its reading stops changing). The dashboard will be a local simple webpage using minimal dependencies.
+
+We will have to be connected to the server wifi which is done in WiFi_Kill_Switch_MQTT.
+
+The robot should be testable outside of the map. 
 
 
+Robot meta information:
+	Dimensions:
+		Width=17cm (TBC)
+		Length=18cm (TBC)
+	
+	Sensor placements:
+		IR sensor: 1cm in front of centre (TBC)
+		RFID reader: 3cm behind centre (TBC)
+		front UDS: 9cm in front of centre facing forward (TBC)
+		side UDSs: 6cm behind centre facing 32 degrees away from forward (TBC)
+		light sensor: 9cm in front of centre and 6cm to the right (TBC)
+		Our front reviving bumper is on our very front.
 
-There will be a dashboard which sends all the data to a laptop over MQTT so we can visualise the map and what the robot sees. We can also send commands back to tune the PIDs and run unit tests.q1
+	Sensor information:
+		RFID reader range = 2cm (TBC)
+		UDS has a cone of detection roughly 20 degrees across
+		Our front reviving bumper has a travel distance of 1cm (TBC). This bumper doesnt activate properly if it is pressed at the sides.
+		Our magnetometer gives us a reading of our heading accurate to ~1 degree in isolation
+	
+	Actuator placements:
+		Seed dispensing hold: 5cm behind centre (TBC)	
+		Treads have a distance between their centres of 132mm and and are each 4cm thick (TBC)
+
+Map information:
+	Hole diameter=22mm (TBC)
+	Line width=1cm (TBC)
+	
+	Layout:
+		Consists of 1 large square arena with a 9x9 grid of holes. There are two tunnels connecting this to the base which is a large rectancle. There is an airlock door on each end of each tunnel.
+		We will hardcode this in manually. It should be stored in one place so the dashboard and robot are always in sync.
