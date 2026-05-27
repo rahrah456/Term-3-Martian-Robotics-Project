@@ -22,7 +22,7 @@ MQTT_PORT = 1883
 GROUP_ID = "3"
 ROBOT_ID = "Terminator"       # Must match BoardId in final_code.ino
 DASHBOARD_ID = "dash3"          # Must match DASHBOARD_ID in secrets.h
-HTTP_PORT = 8080
+HTTP_PORT = 8081
 
 # ── State ───────────────────────────────────────────────────────────────────────
 robot_state = {
@@ -41,14 +41,12 @@ sse_lock = threading.Lock()
 
 # ── MQTT Callbacks ──────────────────────────────────────────────────────────────
 def on_connect(client, userdata, flags, reason_code, properties):
-    print(f"[MQTT] Connected (rc={reason_code})")
+    pass
     # Subscribe to all messages for our group (MiniMessenger topic format)
     client.subscribe(f"lab/g/{GROUP_ID}/from/{ROBOT_ID}/to/{DASHBOARD_ID}")
 
 def on_message(client, userdata, msg):
     payload = msg.payload.decode("utf-8")
-    topic = msg.topic
-    print(f"[MQTT RX] {topic}: {payload}")
 
     # Parse our message format
     if payload.startswith("POSE:"):
@@ -81,7 +79,6 @@ def on_message(client, userdata, msg):
 
     elif payload.startswith("LOG:"):
         msg_text = payload[4:]
-        print(f"[LOG] {msg_text}")
         robot_state["log"].append(msg_text)
         if len(robot_state["log"]) > 50:
             robot_state["log"] = robot_state["log"][-50:]
@@ -90,7 +87,7 @@ def on_message(client, userdata, msg):
     notify_clients()
 
 def on_disconnect(client, userdata, reason_code, properties=None):
-    print("[MQTT] Disconnected — will reconnect")
+    pass
 
 # ── MQTT Client Setup ───────────────────────────────────────────────────────────
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
@@ -103,8 +100,7 @@ def mqtt_thread():
         try:
             mqtt_client.connect(MQTT_HOST, MQTT_PORT, 60)
             mqtt_client.loop_forever()
-        except Exception as e:
-            print(f"[MQTT] Error: {e}, reconnecting in 5s")
+        except Exception:
             time.sleep(5)
 
 # ── SSE ─────────────────────────────────────────────────────────────────────────
@@ -162,16 +158,11 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
 
         elif path == "/command":
             msg = query.get("msg", [""])[0]
-            print(f"[CMD] connected={mqtt_client.is_connected()} msg='{msg}'")
             if msg:
-                # Send via MQTT to robot using MiniMessenger topic format
                 topic = f"lab/g/{GROUP_ID}/from/{DASHBOARD_ID}/to/{ROBOT_ID}"
-                info = mqtt_client.publish(topic, msg)
-                print(f"[CMD] published topic={topic} rc={info.rc} mid={info.mid}")
-                # Also try the old topic in case MiniMessenger routes differently
+                mqtt_client.publish(topic, msg)
                 topic2 = f"group/{GROUP_ID}/board/{ROBOT_ID}"
-                info2 = mqtt_client.publish(topic2, msg)
-                print(f"[CMD] also published {topic2} rc={info2.rc}")
+                mqtt_client.publish(topic2, msg)
                 # Local feedback
                 robot_state["log"].append(f"CMD: {msg}")
                 if len(robot_state["log"]) > 50:
@@ -194,7 +185,7 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        print("[HTTP] %s - - [%s] %s" % (self.client_address[0], self.log_date_time_string(), format % args))
+        pass
 
 # ── HTML Page ───────────────────────────────────────────────────────────────────
 HTML_PAGE = r"""<!DOCTYPE html>
@@ -525,7 +516,6 @@ fetch('/state').then(r => r.json()).then(d => update(d));
 
 # ── Main ────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    print(f"Dashboard starting — MQTT: {MQTT_HOST}:{MQTT_PORT}  HTTP: :{HTTP_PORT}")
     threading.Thread(target=mqtt_thread, daemon=True).start()
     time.sleep(0.5)
 
@@ -533,14 +523,5 @@ if __name__ == "__main__":
         allow_reuse_address = True
         daemon_threads = True
 
-    port = HTTP_PORT
-    while port < HTTP_PORT + 10:
-        try:
-            server = ThreadedHTTPServer(("0.0.0.0", port), DashboardHandler)
-            break
-        except OSError:
-            port += 1
-    if port != HTTP_PORT:
-        print(f"Port {HTTP_PORT} in use — using port {port}")
-    print(f"Open http://localhost:{port} in your browser")
+    server = ThreadedHTTPServer(("0.0.0.0", HTTP_PORT), DashboardHandler)
     server.serve_forever()
