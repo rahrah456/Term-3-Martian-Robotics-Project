@@ -1,6 +1,10 @@
-# Martian Robotics Project — Term 3
+# UCL Year 1 Robotics Challenge
 
-An autonomous robot that navigates a 2.5 m × 2.5 m Martian-themed arena, plants seeds in marked holes, and returns to base — all without human intervention during the run.
+# Terraformer Rover
+
+##### Jonah Wilson-Troy, Wyatt Ip, Ibrahim Syawwal Sofian, Rahul Ranjan
+
+An autonomous robot that navigates a 2.5 m x 2.5 m Martian-themed arena, plants seeds in marked holes, and returns to base - all autonomously and in collaboration with 13 other ~~obstacles~~ rovers.
 
 ---
 
@@ -9,22 +13,31 @@ An autonomous robot that navigates a 2.5 m × 2.5 m Martian-themed arena, pl
 ### Prerequisites
 
 - **Arduino Giga R1 WiFi** (or another board with similar I/O and WiFi capability)
-- **Arduino IDE** (or arduino-cli) with core support for your board
+- c**Arduino IDE** (or arduino-cli) with core support for your board
 - **Python 3.9+** and `pip` for the dashboard
 
-### Robot Firmware
+### Installation
 
-1. Open `final_code/final_code.ino` in the Arduino IDE.
-2. Copy `final_code/secrets.h` into the sketch folder and update the credentials:
-   - `WIFI_SSID` / `WIFI_PASSWORD` — your 2.4 GHz WiFi network
-   - `BROKER_HOST` — IP of your MQTT broker (the lab provides one; or run Mosquitto locally)
-   - `GROUP_ID` — your team number
-3. Install the required libraries via the Library Manager:
-   - **Motoron** (for motor control)
-   - **MFRC522_I2C** (RFID reader)
-   - **MiniMessenger** (MQTT wrapper)
-   - **Servo** (built-in)
-4. Select your board and port, then upload.
+- Open `final_code/final_code.ino` in the Arduino IDE.
+
+- Copy `final_code/secrets.h` into the sketch folder and update the credentials:
+  
+  `WIFI_SSID` / `WIFI_PASSWORD` - your 2.4 GHz WiFi network
+  
+  `BROKER_HOST` - IP of your MQTT broker (the lab provides one; or run Mosquitto locally)
+  
+  `GROUP_ID` - your team number
+
+- Install the required libraries via the Library Manager:
+  
+  - **Motoron** (for motor control)
+  - **MFRC522_I2C** (RFID reader)
+  - **MiniMessenger** (MQTT wrapper)
+  - **Servo** (built-in)
+  - **Wire** (built-in)
+  - **Arduino** (built-in)
+
+- Select your board and port, then upload.
 
 ### Dashboard
 
@@ -46,7 +59,7 @@ Open the URL printed in the terminal (default `http://localhost:8080`). The dash
 
 ```
 final_code/              # Main robot sketch and dashboard
-├── final_code.ino       # Entry point — setup + 50 Hz main loop
+├── final_code.ino       # Entry point - setup + 50 Hz main loop
 ├── Config.h             # Pin assignments, motor limits, calibration
 ├── Map.h                # Arena layout (9×9 hole grid, walls, tunnels)
 ├── Sensors.h            # IR array, UDS, RFID, IMU drivers
@@ -58,7 +71,7 @@ final_code/              # Main robot sketch and dashboard
 archive/                 # Previous prototypes and test sketches
 ```
 
-The robot code is split into header files by concern, all `#include`d by the single `.ino`. There is no `.cpp` — everything is in headers for simplicity.
+The robot code is split into header files by concern, all `#include`d by the single `.ino`. There is no `.cpp` - everything is in headers for simplicity.
 
 ---
 
@@ -83,13 +96,13 @@ All motion is non-blocking. `MotionSM` is a struct with a `tick()` method that a
 
 The main loop runs a simple state machine:
 
-1. **INIT** — wait for IMU calibration and MQTT connection
-2. **IDLE** — listen for ENABLE command from dashboard
-3. **PLAN** — choose next unplanted hole (closest first)
-4. **NAVIGATE** — drive to target using straight-line segments and turns, line-following when crossing the grid
-5. **AVOID** — on obstacle, execute a three-phase detour (turn, straight, turn) then resume navigation
-6. **DEPOSIT** — at the hole, dispense seed, mark hole planted
-7. **RETURN_BASE** — navigate back to origin after all seeds are planted
+1. **INIT** - wait for IMU calibration and MQTT connection
+2. **IDLE** - listen for ENABLE command from dashboard
+3. **PLAN** - choose next unplanted hole (closest first)
+4. **NAVIGATE** - drive to target using straight-line segments and turns, line-following when crossing the grid
+5. **AVOID** - on obstacle, execute a three-phase detour (turn, straight, turn) then resume navigation
+6. **DEPOSIT** - at the hole, dispense seed, mark hole planted
+7. **RETURN_BASE** - navigate back to origin after all seeds are planted
 
 ### Communication
 
@@ -105,10 +118,4 @@ MQTT over WiFi using the MiniMessenger library. The robot publishes pose, state,
 
 ## Behaviour Flowcharts
 
-*Coming soon — we'll add flowcharts for the main state machine and the obstacle avoidance sequence.*
-
----
-
-## Licence
-
-This project is part of a university coursework exercise.
+*Coming soon - we'll add flowcharts for the main state machine and the obstacle avoidance sequence.*

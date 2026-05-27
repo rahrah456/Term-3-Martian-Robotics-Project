@@ -8,9 +8,14 @@
 
 // ============================================================
 //  LOCALISATION  —  dead-reckoning with opportunistic correction
-//  Pose is tracked relative to base origin (mm, degrees).
-//  Accelerometer data (g) is blended at 2% to help during
-//  encoder slip without introducing long-term drift.
+//  Pose tracked relative to base origin (mm, degrees).
+//
+//  Heading:  gyro-assisted complementary filter.
+//    Motors off  →  magnetometer heading (EMA-smoothed)
+//    Motors on   →  gyro integration + slow mag correction
+//
+//  Position:  encoder primary, accelerometer blended only when
+//    encoder-vs-accel slip discrepancy exceeds threshold.
 // ============================================================
 
 struct Pose {
@@ -27,7 +32,6 @@ public:
     pose.x = 0; pose.y = 0; pose.headingDeg = 0;
   }
 
-  // ── Set known start position (e.g. from base RFID) ────────
   void setPose(float x, float y, float headingDeg) {
     pose.x = x;
     pose.y = y;
@@ -36,10 +40,14 @@ public:
   }
 
   // ── Dead-reckoning update ─────────────────────────────────
-  // Call every 20ms with encoder deltas, IMU heading,
-  // and body-frame accelerometer values (g).
-  void update(long encL, long encR, float imuHeading,
-              float accX = 0, float accY = 0) {
+  // Call every 20ms with encoder deltas, IMU heading & gyro,
+  // and body-frame accelerometer (g).  motorsActive controls
+  // the heading complementary filter blend.
+  void update(long encL, long encR,
+              float imuHeading, float gyroZ,
+              float accX, float accY,
+              float pitch, float roll,
+              bool motorsActive) {
     if (!valid) return;
 
     static long lastEncL = encL, lastEncR = encR;
@@ -48,48 +56,84 @@ public:
     lastEncL = encL;
     lastEncR = encR;
 
-    float rad = pose.headingDeg * DEG_TO_RAD;
-    pose.headingDeg = imuHeading;
-
-    // ── Primary: encoder odometry ───────────────────────────
-    float distMM = ((float)(dL + dR) / 2.0f) / TICKS_PER_M * 1000.0f;
-    float encX = distMM * sinf(rad);
-    float encY = distMM * cosf(rad);
-
-    // ── Secondary: accelerometer (2% blend) ─────────────────
-    // Project body-frame acceleration onto world frame
-    float fwdAcc = (accX * cosf(rad) + accY * sinf(rad)) * 9810.0f;  // g → mm/s²
-
-    static float velX = 0, velY = 0;
+    unsigned long now = micros();
     static unsigned long lastUs = 0;
-    unsigned long nowUs = micros();
-    float dt = (nowUs - lastUs) / 1000000.0f;
-    lastUs = nowUs;
+    float dt = (now - lastUs) / 1000000.0f;
+    lastUs = now;
     if (dt <= 0 || dt > 0.05) dt = 0.02;
 
-    // Integrate acceleration → velocity (damped to prevent drift)
-    velX += fwdAcc * sinf(rad) * dt;
-    velY += fwdAcc * cosf(rad) * dt;
-    velX *= 0.98;   // leaky integrator — damps out bias/drift
-    velY *= 0.98;
+    float rad = pose.headingDeg * DEG_TO_RAD;
 
-    // Velocity → displacement (one more integration)
-    static float accelDx = 0, accelDy = 0;
-    accelDx += velX * dt;
-    accelDy += velY * dt;
+    // ── Heading: gyro-assisted complementary filter ─────────
+    // Use sin/cos vector averaging to avoid 0/360 wrapping in EMA.
+    static float gyroHeading = 0;
+    static float sinH = 0, cosH = 0;
+    static bool  gyroInitialised = false;
+    if (!gyroInitialised) {
+      gyroHeading = imuHeading;
+      float hRad = imuHeading * DEG_TO_RAD;
+      sinH = sinf(hRad);
+      cosH = cosf(hRad);
+      gyroInitialised = true;
+    }
 
-    // ── Blend: 98% encoder, 2% accelerometer ────────────────
-    const float ALPHA = 0.02;
-    pose.x += encX + ALPHA * accelDx;
-    pose.y += encY + ALPHA * accelDy;
-    // Remove blended portion so accelDx doesn't accumulate forever
-    accelDx -= ALPHA * accelDx;
-    accelDy -= ALPHA * accelDy;
+    if (motorsActive) {
+      // Motors distort mag field — integrate gyro, slow mag correction
+      gyroHeading += gyroZ * dt;
+      float diff = imuHeading - gyroHeading;
+      if (diff > 180.0f) diff -= 360.0f;
+      if (diff < -180.0f) diff += 360.0f;
+      gyroHeading += diff * 0.02f;  // ~1s correction (wrapping-safe)
 
-    // ── Slip detection (log if encoder says moving but accel disagrees) ──
-    // TODO: use this to adjust blending or trigger correction
-    // float accelMag = sqrtf(accX*accX + accY*accY);
-    // bool slipping = (fabs(distMM) > 1 && fabs(fwdAcc) < 200);
+      pose.headingDeg = gyroHeading;
+    } else {
+      // No motor interference — sin/cos vector EMA on mag heading
+      const float hAlpha = 0.04f;  // ~0.5s EMA at 50Hz
+      float hRad = imuHeading * DEG_TO_RAD;
+      sinH += (sinf(hRad) - sinH) * hAlpha;
+      cosH += (cosf(hRad) - cosH) * hAlpha;
+      pose.headingDeg = atan2f(sinH, cosH) * RAD_TO_DEG;
+      if (pose.headingDeg < 0) pose.headingDeg += 360.0f;
+    }
+
+    // ── Position: encoder primary ───────────────────────────
+    float fwdDistMM = ((float)(dL + dR) / 2.0f) / TICKS_PER_M * 1000.0f;
+    float encVel = fwdDistMM / dt;   // mm/s
+
+    pose.x += fwdDistMM * sinf(rad);
+    pose.y += fwdDistMM * cosf(rad);
+
+    // ── Slip detection + adaptive accel blend ───────────────
+    static float prevEncVel = 0;
+    float encAccel = (encVel - prevEncVel) / dt;  // mm/s²
+    prevEncVel = encVel;
+
+    // ── Forward acceleration from IMU (body → world frame, gravity removed) ──
+    // Gravity component in body frame: g_X = -sin(pitch), g_Y = cos(pitch)*sin(roll)
+    float linX = accX + sinf(pitch);
+    float linY = accY - cosf(pitch) * sinf(roll);
+    static EMA accelSmooth(0.05f);     // ~0.4s EMA at 50Hz
+    float rawFwdAcc = (linX * cosf(rad) + linY * sinf(rad)) * 9810.0f;  // g → mm/s²
+    float imuFwdAcc = accelSmooth.update(rawFwdAcc);
+
+    // Slip metric: |encoder accel - IMU accel| normalised
+    float slip = fabsf(encAccel - imuFwdAcc);
+    float alpha = 0.0f;   // accel blend fraction (0 = none)
+
+    if (slip > 300.0f) {  // ~0.3 m/s² discrepancy → possible slip
+      // Blend accelerometer in proportion to slip magnitude
+      alpha = constrain((slip - 300.0f) / 3000.0f, 0.02f, 0.15f);
+
+      // Double-integrate IMU acceleration for slip correction
+      static float aidVel = 0, aidDisp = 0;
+      aidVel += imuFwdAcc * dt;
+      aidVel *= 0.90f;   // damp drift
+      aidDisp += aidVel * dt;
+
+      pose.x += alpha * aidDisp * sinf(rad);
+      pose.y += alpha * aidDisp * cosf(rad);
+      aidDisp -= alpha * aidDisp;   // remove blended portion
+    }
   }
 
   // ── Correction: RFID tag hit ──────────────────────────────
@@ -98,12 +142,6 @@ public:
     pose.x = pt.x;
     pose.y = pt.y;
   }
-
-  // ── Correction: IR line crossing ──────────────────────────
-  // TODO: implement once arena line pattern is confirmed.
-
-  // ── Correction: UDS wall distance ─────────────────────────
-  // TODO: implement once walls are measured.
 
   // ── Distance to target ────────────────────────────────────
   float distanceTo(float tx, float ty) const {
@@ -123,6 +161,14 @@ public:
     if (diff < -180.0f) diff += 360.0f;
     return diff;
   }
+
+private:
+  // Simple EMA filter (matches the one in Sensors.h)
+  struct EMA {
+    float val, alpha;
+    EMA(float a) : val(0), alpha(a) {}
+    float update(float raw) { return val = val * (1.0f - alpha) + raw * alpha; }
+  };
 };
 
 #endif

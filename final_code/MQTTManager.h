@@ -3,41 +3,92 @@
 
 #include <Arduino.h>
 #include <MiniMessenger.h>
-#include "secrets.h"   // Copy from project root into this directory
+#include "secrets.h"
 #include "Config.h"
 #include "Map.h"
 
 // ============================================================
 //  MQTT MANAGER  —  MiniMessenger wrapper for robot comms
-//  Handles ENABLE/DISABLE, PID tuning, hole status, test cmds.
+//  Handles standard server protocol (key=value pairs),
+//  heartbeat watchdog, automatic registration, and
+//  custom dashboard commands (PID tuning, test modes).
 // ============================================================
 
-// Forward declarations for callbacks
 class MQTTManager;
 
-// Global pointer so the static callback can reach our instance
 static MQTTManager* g_mqtt = nullptr;
+
+static bool getKeyValue(const char* msg, const char* key,
+                        char* out, size_t outLen) {
+  size_t kLen = strlen(key);
+  const char* p = msg;
+  while (*p) {
+    while (*p == ' ') p++;
+    if (!*p) break;
+    if (strncmp(p, key, kLen) == 0 && p[kLen] == '=') {
+      p += kLen + 1;
+      size_t vLen = 0;
+      while (p[vLen] && p[vLen] != ' ') vLen++;
+      size_t cp = (vLen < outLen - 1) ? vLen : outLen - 1;
+      memcpy(out, p, cp);
+      out[cp] = '\0';
+      return true;
+    }
+    while (*p && *p != ' ') p++;
+  }
+  return false;
+}
 
 class MQTTManager {
 public:
   MiniMessenger messenger;
   const char* boardId;
-  bool enabled;
 
-  // Callbacks set by main code
+  // Priority-based enable: serverAllow (medium) && dashboardDesired (lowest).
+  // Killed (highest) is owned by final_code.ino.
+  bool serverAllow;
+  bool dashboardDesired;
+
+  // ── Callbacks ──────────────────────────────────────────────
   void (*onEnable)();
   void (*onDisable)();
-  void (*onPidTune)(const String& key, float val);
-  void (*onHoleStatus)(uint8_t row, uint8_t col, bool fertile);
+  void (*onEmergency)();
+  void (*onHoleStatus)(uint8_t row, uint8_t col, bool fertile, bool planted);
   void (*onRevive)(const char* robotId);
   void (*onTestCommand)(const String& cmd);
+  void (*onPidTune)(const String& key, float val);
 
   MQTTManager(const char* id)
-    : boardId(id), enabled(false),
+    : boardId(id), serverAllow(false), dashboardDesired(false),
       onEnable(nullptr), onDisable(nullptr),
-      onPidTune(nullptr), onHoleStatus(nullptr),
-      onRevive(nullptr), onTestCommand(nullptr) {}
+      onEmergency(nullptr), onHoleStatus(nullptr),
+      onRevive(nullptr), onTestCommand(nullptr),
+      onPidTune(nullptr) {}
 
+  // ── Priority model ─────────────────────────────────────────
+  // serverAllow = medium (server heartbeat).
+  // dashboardDesired = low (dashboard ENABLE/DISABLE commands).
+  // killed (hardware, highest) is checked externally.
+  // Effective = !killed && serverAllow && dashboardDesired.
+
+  bool isEffectivelyEnabled() const {
+    return serverAllow && dashboardDesired;
+  }
+
+  // Call when serverAllow or dashboardDesired may have changed.
+  // Fires onEnable/onDisable if effective state toggles.
+  void applyState() {
+    bool eff = isEffectivelyEnabled();
+    if (eff != lastEffective) {
+      lastEffective = eff;
+      if (eff) { Serial.println("MQTT: enabled");
+                 if (onEnable) onEnable(); }
+      else     { Serial.println("MQTT: disabled");
+                 if (onDisable) onDisable(); }
+    }
+  }
+
+  // ── Initialise ─────────────────────────────────────────────
   void begin() {
     g_mqtt = this;
     messenger.onMessage(staticCallback);
@@ -46,20 +97,66 @@ public:
                     GROUP_ID, boardId);
   }
 
+  // ── Poll (call every main loop iteration) ──────────────────
   void loop() {
     messenger.loop();
+
+    // Heartbeat watchdog: auto-disallow if no heartbeat for 1s
+    // Only fires after server has contacted us at least once.
+    if (serverEverContacted && millis() - lastHeartbeatMs > 1000u) {
+      serverAllow = false;
+      Serial.println("MQTT: heartbeat timeout — server disallow");
+      applyState();
+    }
+
+    // Registration every 10 seconds
+    if (messenger.isConnected() && millis() - lastRegisterMs > 10000u) {
+      lastRegisterMs = millis();
+      char reg[80];
+      snprintf(reg, sizeof(reg),
+               "type=register team_id=%s board_id=%s",
+               GROUP_ID, boardId);
+      messenger.sendToBoard("server", reg);
+    }
   }
 
   bool isConnected() {
     return messenger.isConnected();
   }
 
-  // ── Send helpers ──────────────────────────────────────────
+  // ── Standard Server Protocol: send ─────────────────────────
+
+  void sendIsFertile(const char* tagId) {
+    char buf[80];
+    snprintf(buf, sizeof(buf),
+             "type=isFertile tag_id=%s board_id=%s",
+             tagId, boardId);
+    messenger.sendToBoard("server", buf);
+  }
+
+  void sendSeedPlanted(const char* tagId) {
+    char buf[80];
+    snprintf(buf, sizeof(buf),
+             "type=seedPlanted tag_id=%s board_id=%s",
+             tagId, boardId);
+    messenger.sendToBoard("server", buf);
+  }
+
+  void sendAirlockRequest(bool entry) {
+    char buf[64];
+    snprintf(buf, sizeof(buf),
+             "type=%s board_id=%s",
+             entry ? "openAirlockA" : "openAirlockB",
+             boardId);
+    messenger.sendToBoard("server", buf);
+  }
+
+  // ── Dashboard: directed to DASHBOARD_ID only (not all robots) ──
 
   void sendPose(float x, float y, float heading) {
     char buf[64];
     snprintf(buf, sizeof(buf), "POSE:%.0f,%.0f,%.1f", x, y, heading);
-    messenger.sendToGroup(buf);
+    messenger.sendToBoard(DASHBOARD_ID, buf);
   }
 
   void sendHoleStatus(uint8_t row, uint8_t col,
@@ -69,49 +166,114 @@ public:
              row, col,
              planted ? "1" : "0",
              fertile ? "1" : "0");
-    messenger.sendToGroup(buf);
+    messenger.sendToBoard(DASHBOARD_ID, buf);
   }
 
   void sendState(const char* state) {
     char buf[64];
     snprintf(buf, sizeof(buf), "STATE:%s", state);
-    messenger.sendToGroup(buf);
+    messenger.sendToBoard(DASHBOARD_ID, buf);
   }
 
   void sendLog(const char* msg) {
-    char buf[128];
+    char buf[144];
     snprintf(buf, sizeof(buf), "LOG:%s", msg);
-    messenger.sendToGroup(buf);
+    messenger.sendToBoard(DASHBOARD_ID, buf);
+    Serial.print("LOG: ");
+    Serial.println(msg);
   }
 
   void sendSensorSnapshot(const uint16_t irVals[], int centroid,
                            long udsL, long udsM, long udsR,
-                           float heading) {
-    // IR summary
-    char buf[180];
-    int pos = snprintf(buf, sizeof(buf),
-                       "SENSOR:%d,%d,%d,%ld,%ld,%ld,%.1f",
-                       centroid,
-                       irVals[0], irVals[IR_COUNT - 1],
-                       udsL, udsM, udsR, heading);
-    messenger.sendToGroup(buf);
+                           float heading, int lightVal) {
+    char buf[256];
+    snprintf(buf, sizeof(buf),
+             "SENSOR:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%ld,%ld,%ld,%.1f,%d",
+             centroid,
+             irVals[0], irVals[1], irVals[2], irVals[3], irVals[4],
+             irVals[5], irVals[6], irVals[7], irVals[8],
+             udsL, udsM, udsR, heading, lightVal);
+    messenger.sendToBoard(DASHBOARD_ID, buf);
   }
 
-  // ── Parse incoming messages ───────────────────────────────
-  // Called from static callback.
+  // ── Receive: parse incoming messages ───────────────────────
 
   void handleMessage(const char* from, const char* msg) {
-    // Kill switch
+    // Try standard key=value protocol first
+    char typeVal[32];
+    if (getKeyValue(msg, "type", typeVal, sizeof(typeVal))) {
+
+      if (strcmp(typeVal, "heartbeat") == 0) {
+        lastHeartbeatMs = millis();
+        serverEverContacted = true;
+        char enableVal[4];
+        if (getKeyValue(msg, "enable", enableVal, sizeof(enableVal))) {
+          serverAllow = (strcmp(enableVal, "1") == 0);
+          Serial.print("MQTT: heartbeat enable=");
+          Serial.println(serverAllow ? "1" : "0");
+          applyState();
+        }
+        return;
+      }
+
+      if (strcmp(typeVal, "emergency") == 0) {
+        serverAllow = false;
+        dashboardDesired = false;
+        Serial.println("MQTT: EMERGENCY STOP");
+        if (onEmergency) onEmergency();
+        applyState();
+        return;
+      }
+
+      if (strcmp(typeVal, "disable") == 0) {
+        serverAllow = false;
+        Serial.println("MQTT: disabled by server");
+        applyState();
+        return;
+      }
+
+      if (strcmp(typeVal, "isFertileReply") == 0) {
+        char fertileVal[8], plantedVal[8];
+        int x = -1, y = -1;
+        bool hasFertile = getKeyValue(msg, "fertile", fertileVal, sizeof(fertileVal));
+        bool hasPlanted = getKeyValue(msg, "planted", plantedVal, sizeof(plantedVal));
+        // Parse x,y if present (grid coordinates)
+        char xv[4], yv[4];
+        if (getKeyValue(msg, "x", xv, sizeof(xv))) x = atoi(xv);
+        if (getKeyValue(msg, "y", yv, sizeof(yv))) y = atoi(yv);
+
+        if (onHoleStatus && hasFertile && hasPlanted && x >= 0 && y >= 0) {
+          bool f = (strcmp(fertileVal, "true") == 0);
+          bool p = (strcmp(plantedVal, "true") == 0);
+          onHoleStatus((uint8_t)y, (uint8_t)x, f, p);
+        }
+        return;
+      }
+
+      if (strcmp(typeVal, "openAirlockReply") == 0) {
+        char acc[8];
+        if (getKeyValue(msg, "accepted", acc, sizeof(acc))) {
+          Serial.print("MQTT: airlock ");
+          Serial.println(strcmp(acc, "true") == 0 ? "accepted" : "denied");
+        }
+        return;
+      }
+
+      // Unknown standard message — fall through to legacy
+    }
+
+    // ── Legacy / Dashboard Commands ─────────────────────────
     if (strcmp(msg, "ENABLE") == 0) {
-      enabled = true;
-      Serial.println("MQTT: ENABLED");
-      if (onEnable) onEnable();
+      // Dashboard enable (lowest priority) — only effective if server allows
+      dashboardDesired = true;
+      Serial.println("MQTT: dashboard wants ENABLE");
+      applyState();
       return;
     }
     if (strcmp(msg, "DISABLE") == 0) {
-      enabled = false;
-      Serial.println("MQTT: DISABLED");
-      if (onDisable) onDisable();
+      dashboardDesired = false;
+      Serial.println("MQTT: dashboard wants DISABLE");
+      applyState();
       return;
     }
 
@@ -129,11 +291,12 @@ public:
       }
     }
 
-    // Hole status from server: HOLE_STATUS:row,col,fertile
+    // Hole status from server (legacy): HOLE_STATUS:row,col,fertile
     if (strncmp(msg, "HOLE_STATUS:", 12) == 0) {
       uint8_t r, c; int f;
       if (sscanf(msg + 12, "%hhu,%hhu,%d", &r, &c, &f) >= 3) {
-        if (onHoleStatus) onHoleStatus(r, c, f != 0);
+        // Map legacy format to new callback
+        if (onHoleStatus) onHoleStatus(r, c, f != 0, false);
       }
       return;
     }
@@ -144,7 +307,7 @@ public:
       return;
     }
 
-    // Test commands from dashboard: TEST:FOLLOW_LINE, TEST:FOLLOW_WALL, TEST:DEPOSIT
+    // Test commands: TEST:FOLLOW_LINE, TEST:FOLLOW_WALL, TEST:DEPOSIT
     if (strncmp(msg, "TEST:", 5) == 0) {
       if (onTestCommand) onTestCommand(String(msg + 5));
       return;
@@ -157,12 +320,18 @@ public:
   }
 
 private:
+  unsigned long lastHeartbeatMs = 0;
+  unsigned long lastRegisterMs = 0;
+  bool lastEffective = false;
+  bool serverEverContacted = false;
+
   static void staticCallback(const MessageMetadata& metadata,
                               const uint8_t* payload, size_t length) {
     if (!g_mqtt) return;
-    char msg[length + 1];
-    memcpy(msg, payload, length);
-    msg[length] = '\0';
+    char msg[256];
+    size_t copyLen = (length < 255) ? length : 255;
+    memcpy(msg, payload, copyLen);
+    msg[copyLen] = '\0';
     g_mqtt->handleMessage(metadata.fromBoardId, msg);
   }
 };

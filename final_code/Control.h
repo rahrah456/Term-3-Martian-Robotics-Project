@@ -14,16 +14,20 @@
 // Encoder globals — defined in final_code.ino
 extern volatile long encL;
 extern volatile long encR;
+extern bool motorsRunning;           // tracked for heading filter
 
 // Forward declaration (defined later in this file)
-bool obstacleAhead();
+bool obstacleAhead(float udsMidCm);
 
 // ── Motor Helper ────────────────────────────────────────────
 void setMotors(MotoronI2C& mc, int left, int right) {
+  // Bias: right track gets more power to compensate for left being stronger
+  right = (int)(right * BIAS_RIGHT);
   left  = constrain(left,  -MOTOR_MAX, MOTOR_MAX);
   right = constrain(right, -MOTOR_MAX, MOTOR_MAX);
-  mc.setSpeed(1, left);
-  mc.setSpeed(2, -right);
+  mc.setSpeed(2, -left);    // M2 = left track (polarity reversed)
+  mc.setSpeed(1, right);    // M1 = right track
+  motorsRunning = (left != 0 || right != 0);
 }
 
 // ── Velocity PID Controller ─────────────────────────────────
@@ -85,13 +89,13 @@ struct MotionSM {
   unsigned long prevTime = 0;
   unsigned long startMs = 0, stopAfterMs = 0;
   int baseSpeed = 0;
-  int maxDiff = 40;
-  float kp = 0.5, ki = 0.0, kd = 0.0;
+  int maxDiff = 120;
+  float kp = 30, ki = 1.0, kd = 0.0;
 
   // Wall follow specific
   int wallSide = 0;
-  int trigPin = 0, echoPin = 0;
   float cosAngle = 0.5299f;
+  float wallTargetDist = 20.0f;
   float buf[5] = {0};
   int bufIdx = 0;
   bool bufFull = false;
@@ -129,13 +133,11 @@ struct MotionSM {
     result = RUNNING;
   }
 
-  void startWallFollow(int base, int side, float p, float i, float d, int md,
+  void startWallFollow(int base, int side, float targetCm, float p, float i, float d, int md,
                        unsigned long stopMs = 15000) {
     type = WALL_FOLLOW; baseSpeed = base; stopAfterMs = stopMs;
-    wallSide = side;
+    wallSide = side; wallTargetDist = targetCm;
     kp = p; ki = i; kd = d; maxDiff = md;
-    trigPin = (side < 0) ? PIN_UDS_LT : PIN_UDS_RT;
-    echoPin = (side < 0) ? PIN_UDS_LE : PIN_UDS_RE;
     cosAngle = 0.5299f;
     integral = 0; prevErr = 0; prevTime = millis(); startMs = millis();
     bufIdx = 0; bufFull = false;
@@ -156,10 +158,10 @@ struct MotionSM {
 
   // ── Tick: advance one step ───────────────────────────────
   // Pass sensor data needed by the active motion type.
-  //   STRAIGHT/TURN: use encL/encR globals directly
+  //   STRAIGHT/TURN: use encL/encR globals directly; obstacle check uses udsDistCm
   //   LINE_FOLLOW:   pass centroid
-  //   WALL_FOLLOW:   pass udsDistCm
-  //   CENTRE_TUNNEL: pass udsLeftCm, udsRightCm
+  //   WALL_FOLLOW:   uses udsLeftCm (side<0) or udsRightCm (side>0)
+  //   CENTRE_TUNNEL: uses udsLeftCm, udsRightCm
   //
   // Returns DONE, RUNNING, TIMEOUT, or BLOCKED.
 
@@ -168,29 +170,29 @@ struct MotionSM {
     if (type == IDLE) return DONE;
     if (result != RUNNING) return result;
 
-    if (obstacleAhead()) { setMotors(mc, 0, 0); return result = BLOCKED; }
+    // Obstacle check: only for open-loop STRAIGHT/TURN (not controlled types
+    // like WALL_FOLLOW which intentionally get close to walls).
+    if (type == STRAIGHT || type == TURN) {
+      if (obstacleAhead(udsDistCm)) { setMotors(mc, 0, 0); return result = BLOCKED; }
+    }
 
     switch (type) {
 
-      // ── STRAIGHT ──────────────────────────────────────────
+      // ── STRAIGHT (open-loop, no PID) ───────────────────────
       case STRAIGHT: {
         if (millis() >= deadline) { setMotors(mc, 0, 0); return result = TIMEOUT; }
         if (abs(encL - startL) >= ticks && abs(encR - startR) >= ticks)
           { setMotors(mc, 0, 0); return result = DONE; }
-        int cmdL = pidL.update(encL, speed);
-        int cmdR = pidR.update(encR, speed);
-        setMotors(mc, cmdL, cmdR);
+        setMotors(mc, speed, speed);
         return RUNNING;
       }
 
-      // ── TURN ──────────────────────────────────────────────
+      // ── TURN (open-loop, no PID) ──────────────────────────
       case TURN: {
         if (millis() >= deadline) { setMotors(mc, 0, 0); return result = TIMEOUT; }
         if (abs(encL - startL) >= ticks && abs(encR - startR) >= ticks)
           { setMotors(mc, 0, 0); return result = DONE; }
-        int cmdL = pidL.update(encL,  dir * speed);
-        int cmdR = pidR.update(encR, -dir * speed);
-        setMotors(mc, cmdL, cmdR);
+        setMotors(mc, dir * speed, -dir * speed);
         return RUNNING;
       }
 
@@ -235,13 +237,13 @@ struct MotionSM {
       }
 
       // ── WALL FOLLOW ───────────────────────────────────────
+      // Uses the side UDS: udsLeftCm for wallSide<0, udsRightCm for wallSide>0
       case WALL_FOLLOW: {
         if (millis() - startMs >= stopAfterMs)
           { setMotors(mc, 0, 0); return result = DONE; }
 
-        if (udsDistCm < 0) udsDistCm = (float)readUDS(trigPin, echoPin);
-
-        buf[bufIdx] = udsDistCm;
+        float sideDist = (wallSide < 0) ? udsLeftCm : udsRightCm;
+        buf[bufIdx] = sideDist;
         bufIdx = (bufIdx + 1) % 5;
         if (bufIdx == 0) bufFull = true;
         float dist = bufFull ? medianOf5(buf[0], buf[1], buf[2], buf[3], buf[4])
@@ -252,7 +254,7 @@ struct MotionSM {
         prevTime = now;
         if (dt <= 0.0f || dt > 0.5f) dt = 0.02f;
 
-        float error = dist * cosAngle - 20.0f;
+        float error = dist * cosAngle - wallTargetDist;
         integral += error * dt;
         integral = constrain(integral, -150.0f, 150.0f);
         float deriv = (error - prevErr) / dt;
@@ -270,9 +272,6 @@ struct MotionSM {
       case CENTRE_TUNNEL: {
         if (millis() - startMs >= stopAfterMs)
           { setMotors(mc, 0, 0); return result = DONE; }
-
-        if (udsLeftCm < 0)  udsLeftCm  = (float)readUDS(PIN_UDS_LT, PIN_UDS_LE);
-        if (udsRightCm < 0) udsRightCm = (float)readUDS(PIN_UDS_RT, PIN_UDS_RE);
 
         float error = udsLeftCm - udsRightCm;
         float correction = kp * error;
@@ -302,9 +301,8 @@ void lockSeeds(Servo& servo) {
 }
 
 // ── Obstacle Detection ──────────────────────────────────────
-bool obstacleAhead() {
-  long d = readUDS(PIN_UDS_MT, PIN_UDS_ME);
-  return d > 0 && d < (OBSTACLE_STOP_MM / 10);
+bool obstacleAhead(float udsMidCm) {
+  return udsMidCm > 0 && udsMidCm < (OBSTACLE_STOP_MM / 10);
 }
 
 #endif

@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en" data-darkreader-mode="dynamic" data-darkreader-scheme="dark"><head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8"><style class="darkreader darkreader--fallback" media="screen"></style><style class="darkreader darkreader--user-agent" media="screen">@layer {
+html {
+    background-color: var(--darkreader-background-ffffff, #3a3c3d) !important;
+}
+html {
+    color-scheme: dark !important;
+}
+iframe {
+    color-scheme: dark !important;
+}
+html, body {
+    background-color: var(--darkreader-background-ffffff, #3a3c3d);
+}
+html, body {
+    border-color: var(--darkreader-border-4c4c4c, #878075);
+    color: var(--darkreader-text-000000, #e9e7e5);
+}
+a {
+    color: var(--darkreader-text-0040ff, #51a0fc);
+}
+table {
+    border-color: var(--darkreader-border-808080, #6d7375);
+}
+mark {
+    color: var(--darkreader-text-000000, #e9e7e5);
+}
+::placeholder {
+    color: var(--darkreader-text-a9a9a9, #bcb6ad);
+}
+input:-webkit-autofill,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+    background-color: var(--darkreader-background-faffbd, #5c5f26) !important;
+    color: var(--darkreader-text-000000, #e9e7e5) !important;
+}
+* {
+    scrollbar-color: var(--darkreader-background-b0b0b0, #606467) var(--darkreader-background-f1f1f1, #414444);
+}
+::selection {
+    background-color: var(--darkreader-background-0060d4, #2667b5) !important;
+    color: var(--darkreader-text-ffffff, #e9e7e5) !important;
+}
+::-moz-selection {
+    background-color: var(--darkreader-background-0060d4, #2667b5) !important;
+    color: var(--darkreader-text-ffffff, #e9e7e5) !important;
+}
+}</style><style class="darkreader darkreader--text" media="screen"></style><style class="darkreader darkreader--invert" media="screen">.jfk-bubble.gtx-bubble, .captcheck_answer_label > input + img, span#closed_text > img[src^="https://www.gstatic.com/images/branding/googlelogo"], span[data-href^="https://www.hcaptcha.com/"] > #icon, img.Wirisformula, a[data-testid="headerMediumLogo"]>svg, .d2l-navigation-link-image-container, .d2l-iframe-loading-container, div.mc-ip-hide[style*="background: rgb(255, 255, 255) !important"], [style*="color: rgb(0, 0, 1) !important;"] {
+    filter: invert(100%) hue-rotate(180deg) brightness(120%) contrast(60%) !important;
+}</style><style class="darkreader darkreader--inline" media="screen">[data-darkreader-inline-bgcolor] {
+  background-color: var(--darkreader-inline-bgcolor) !important;
+}
+[data-darkreader-inline-bgimage] {
+  background-image: var(--darkreader-inline-bgimage) !important;
+}
+[data-darkreader-inline-border] {
+  border-color: var(--darkreader-inline-border) !important;
+}
+[data-darkreader-inline-border-bottom] {
+  border-bottom-color: var(--darkreader-inline-border-bottom) !important;
+}
+[data-darkreader-inline-border-left] {
+  border-left-color: var(--darkreader-inline-border-left) !important;
+}
+[data-darkreader-inline-border-right] {
+  border-right-color: var(--darkreader-inline-border-right) !important;
+}
+[data-darkreader-inline-border-top] {
+  border-top-color: var(--darkreader-inline-border-top) !important;
+}
+[data-darkreader-inline-boxshadow] {
+  box-shadow: var(--darkreader-inline-boxshadow) !important;
+}
+[data-darkreader-inline-color] {
+  color: var(--darkreader-inline-color) !important;
+}
+[data-darkreader-inline-fill] {
+  fill: var(--darkreader-inline-fill) !important;
+}
+[data-darkreader-inline-stroke] {
+  stroke: var(--darkreader-inline-stroke) !important;
+}
+[data-darkreader-inline-outline] {
+  outline-color: var(--darkreader-inline-outline) !important;
+}
+[data-darkreader-inline-stopcolor] {
+  stop-color: var(--darkreader-inline-stopcolor) !important;
+}
+[data-darkreader-inline-bg] {
+  background: var(--darkreader-inline-bg) !important;
+}
+[data-darkreader-inline-border-short] {
+  border: var(--darkreader-inline-border-short) !important;
+}
+[data-darkreader-inline-border-bottom-short] {
+  border-bottom: var(--darkreader-inline-border-bottom-short) !important;
+}
+[data-darkreader-inline-border-left-short] {
+  border-left: var(--darkreader-inline-border-left-short) !important;
+}
+[data-darkreader-inline-border-right-short] {
+  border-right: var(--darkreader-inline-border-right-short) !important;
+}
+[data-darkreader-inline-border-top-short] {
+  border-top: var(--darkreader-inline-border-top-short) !important;
+}
+[data-darkreader-inline-invert] {
+    filter: invert(100%) hue-rotate(180deg);
+}</style><style class="darkreader darkreader--variables" media="screen">:root {
+   --darkreader-neutral-background: var(--darkreader-background-ffffff, #3a3c3d);
+   --darkreader-neutral-text: var(--darkreader-text-000000, #e9e7e5);
+   --darkreader-selection-background: var(--darkreader-background-0060d4, #2667b5);
+   --darkreader-selection-text: var(--darkreader-text-ffffff, #e9e7e5);
+}</style><style class="darkreader darkreader--root-vars" media="screen"></style>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mini Messenger Robot Inspector</title>
+    <link rel="stylesheet" href="Mini%20Messenger%20Robot%20Inspector_files/styles.css"><style class="darkreader darkreader--sync" media="screen"></style>
+  <meta name="darkreader" content="9305d64408e4101940c4d8ffd3e95df6"><style class="darkreader darkreader--override" media="screen">.vimvixen-hint {
+    background-color: var(--darkreader-background-ffd76e, #7e6526) !important;
+    border-color: var(--darkreader-background-c59d00, #ab9026) !important;
+    color: var(--darkreader-text-302505, #dbd8d4) !important;
+}
+#vimvixen-console-frame {
+    color-scheme: light !important;
+}
+::placeholder {
+    opacity: 0.5 !important;
+}
+#edge-translate-panel-body,
+.MuiTypography-body1,
+.nfe-quote-text {
+    color: var(--darkreader-neutral-text) !important;
+}
+gr-main-header {
+    background-color: var(--darkreader-background-add8e6, #3d6470) !important;
+}
+.tou-z65h9k,
+.tou-mignzq,
+.tou-1b6i2ox,
+.tou-lnqlqk {
+    background-color: var(--darkreader-neutral-background) !important;
+}
+.tou-75mvi {
+    background-color: var(--darkreader-background-cfecf5, #335762) !important;
+}
+.tou-ta9e87,
+.tou-1w3fhi0,
+.tou-1b8t2us,
+.tou-py7lfi,
+.tou-1lpmd9d,
+.tou-1frrtv8,
+.tou-17ezmgn {
+    background-color: var(--darkreader-background-f5f5f5, #3f4142) !important;
+}
+.tou-uknfeu {
+    background-color: var(--darkreader-background-faedda, #5f4b2e) !important;
+}
+.tou-6i3zyv {
+    background-color: var(--darkreader-background-85c3d8, #447484) !important;
+}
+div.mermaid-viewer-control-panel .btn {
+    background-color: var(--darkreader-neutral-background);
+    fill: var(--darkreader-neutral-text);
+}
+svg g rect.er {
+    fill: var(--darkreader-neutral-background) !important;
+}
+svg g rect.er.entityBox {
+    fill: var(--darkreader-neutral-background) !important;
+}
+svg g rect.er.attributeBoxOdd {
+    fill: var(--darkreader-neutral-background) !important;
+}
+svg g rect.er.attributeBoxEven {
+    fill: var(--darkreader-selection-background);
+    fill-opacity: 0.8 !important;
+}
+svg rect.er.relationshipLabelBox {
+    fill: var(--darkreader-neutral-background) !important;
+}
+svg g g.nodes rect,
+svg g g.nodes polygon {
+    fill: var(--darkreader-neutral-background) !important;
+}
+svg g rect.task {
+    fill: var(--darkreader-selection-background) !important;
+}
+svg line.messageLine0,
+svg line.messageLine1 {
+    stroke: var(--darkreader-neutral-text) !important;
+}
+div.mermaid .actor {
+    fill: var(--darkreader-neutral-background) !important;
+}
+mitid-authenticators-code-app > .code-app-container {
+    background-color: white !important;
+    padding-top: 1rem;
+}
+iframe#unpaywall[src$="unpaywall.html"] {
+    color-scheme: light !important;
+}
+select {
+    --darkreader-bg--form-control-background-color: rgba(22, 22, 22, 0) !important;
+}
+body#tumblr {
+    --darkreader-bg--secondary-accent: 31, 32, 34 !important;
+    --darkreader-bg--white: 23, 23, 23 !important;
+    --darkreader-text--black: 228, 224, 218 !important;
+}
+:host {
+    --d2l-border-color: var(--darkreader-bg--d2l-color-gypsum) !important;
+    --d2l-button-icon-background-color-hover: var(--darkreader-bg--d2l-color-gypsum) !important;
+    --d2l-color-ferrite: var(--darkreader-neutral-text) !important;
+    --d2l-color-sylvite: var(--darkreader-bg--d2l-color-sylvite) !important;
+    --d2l-dropdown-background-color: var(--darkreader-neutral-background) !important;
+    --d2l-dropdown-border-color: var(--darkreader-border--d2l-color-mica) !important;
+    --d2l-input-backgroud-color: var(--darkreader-neutral-background) !important;
+    --d2l-menu-border-color: var(--darkreader-bg--d2l-color-gypsum) !important;
+    --d2l-tooltip-background-color: var(--darkreader-neutral-background) !important;
+    --d2l-tooltip-border-color: var(--darkreader-bg--d2l-color-gypsum) !important;
+}
+:host([_floating]) .d2l-floating-buttons-container {
+    background-color: var(--darkreader-neutral-background) !important;
+    border-top-color: var(--darkreader-border--d2l-color-mica) !important;
+    opacity: 0.88 !important;
+}
+d2l-card {
+    background: var(--darkreader-neutral-background) !important;
+    border-color: var(--darkreader-border--d2l-color-gypsum) !important;
+}
+d2l-dropdown-content > div,
+d2l-menu-item {
+    background-color: var(--darkreader-neutral-background) !important;
+    border-radius: 10px !important;
+}
+d2l-empty-state-simple {
+    border-color: var(--darkreader-bg--d2l-color-gypsum) !important;
+}
+.d2l-button-filter > ul > li > a.vui-button {
+    border-color: var(--darkreader-border--d2l-color-mica) !important;
+}
+.d2l-label-text:has(.d2l-button-subtle-content):hover,
+.d2l-label-text:has(.d2l-button-subtle-content):focus,
+.d2l-label-text:has(.d2l-button-subtle-content):active {
+    background-color: var(--darkreader-bg--d2l-color-gypsum) !important;
+}
+.d2l-navigation-centerer {
+    color: inherit !important;
+}
+.d2l-tabs-layout {
+    border-color: var(--darkreader-border--d2l-color-gypsum) !important;
+}
+.d2l-input,
+.d2l-calendar-date,
+.d2l-htmleditor-container {
+    background-color: var(--darkreader-neutral-background) !important;
+}
+.d2l-collapsible-panel {
+    border: 1px solid var(--darkreader-border--d2l-color-mica) !important;
+    border-radius: 0.4rem !important;
+}
+.d2l-collapsible-panel-divider {
+    border-bottom: 1px solid var(--darkreader-border--d2l-color-mica) !important;
+}
+.d2l-w2d-flex {
+    border-bottom: 2px solid var(--darkreader-border--d2l-color-mica) !important;
+}
+.d2l-collapsible-panel scrolled,
+.d2l-collapsible-panel-header,
+.d2l-w2d-collection-fixed {
+    background-color: var(--darkreader-neutral-background) !important;
+}
+.d2l-loading-spinner-bg {
+    fill: var(--darkreader-bg--d2l-color-gypsum) !important;
+}
+.d2l-loading-spinner-bg-stroke {
+    stroke: var(--darkreader-border--d2l-color-mica) !important;
+}
+.d2l-loading-spinner-wrapper svg path,
+.d2l-loading-spinner-wrapper svg circle {
+    fill: var(--darkreader-neutral-background) !important;
+}
+.d2l-twopanelselector-side.d2l-twopanelselector-side-sep {
+    background: var(--darkreader-bg--d2l-color-mica) !important;
+}
+.d2l-le-TreeAccordionItem-anchor::before {
+    background: var(--darkreader-bg--d2l-color-corundum) !important;
+}
+table[class|="moz-header"] {
+    background: none;
+}
+*[style*="color: rgba(0,0,0,"],
+*[style*="color: rgba(0, 0, 0,"],
+*[style*="color:#000"],
+*[style*="color:black"],
+*[style*="color:#282828"],
+*[style*="color:#444"] {
+    color: var(--darkreader-neutral-text) !important;
+}
+*[style*="background:#fff"],
+*[style*="background-color:#fff"] {
+    background: var(--darkreader-neutral-background) !important;
+}
+*[bgcolor="#F5F5F5"],
+*[style*="background-color: #F5F5F5"] {
+    background: var(--darkreader-background-f5f5f5, #3f4142) !important;
+}
+body[style*="background: rgb(255, 255, 255) !important"] *:not(a),
+.body[style*="background-color: rgb(254, 254, 254) !important"] *:not(a) {
+    background-color: var(--darkreader-neutral-background) !important;
+}
+div[style*="www.gstatic.com/android/"] {
+    background: none !important;
+}
+*[style*="background:#f9f9f9"] {
+    background: var(--darkreader-background-f9f9f9, #3d3f40) !important;
+}
+body.mediawiki.skin-vector #mw-page-base {
+    background-image: none !important;
+}
+embed[type="application/pdf"] { filter: invert(100%) contrast(90%); }</style></head>
+  <body class="mode-team">
+    <div id="login-overlay" style="display: none;">
+      <div class="login-box">
+        <p class="eyebrow">Security Check</p>
+        <h2>Base Authentication</h2>
+        <p>Nice try......</p>
+        <input type="password" id="password-input" placeholder="Enter security key" onkeydown="if(event.key==='Enter') login()">
+        <button class="primary-button login-button" onclick="login()">Unlock Dashboard</button>
+        <div id="login-error" class="login-error"></div>
+      </div>
+    </div>
+
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Mini Messenger</p>
+        <h1 id="app-title">Team 3 Dashboard</h1>
+      </div>
+      <div class="header-actions">
+        <div id="connection-pill" class="status-pill online">Live</div>
+        <button id="clear-registrations" class="secondary-button base-control" type="button">Clear Registrations</button>
+        <button id="enable-all" class="primary-button base-control" type="button">Enable All Robots</button>
+        <button id="reset-planted" class="secondary-button base-control" type="button">Reset Map</button>
+        <button id="reset-exploration" class="secondary-button base-control" type="button">Reset Fog</button>
+        <button id="rerandomize-map" class="secondary-button base-control" type="button">Rerandomize</button>
+        <a href="http://192.168.0.74:8090/network" class="secondary-button base-control" style="text-decoration:none; display:inline-flex; align-items:center;">Network Health</a>
+        <a href="http://192.168.0.74:8090/traffic" class="secondary-button base-control" style="text-decoration:none; display:inline-flex; align-items:center;">Live Traffic</a>
+        <button id="override-airlock-a" class="secondary-button base-control" type="button">Override A</button>
+        <button id="override-airlock-b" class="secondary-button base-control" type="button">Override B</button>
+        <button id="emergency-stop" class="danger-button base-control" type="button">Emergency Stop</button>
+        <button id="emergency-reset" class="secondary-button base-control" type="button" disabled="disabled">Reset Emergency</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="summary-strip" aria-label="System summary">
+        <div>
+          <span id="summary-teams-label" class="summary-label">Team</span>
+          <strong id="summary-teams">3</strong>
+        </div>
+        <div>
+          <span class="summary-label">Robots</span>
+          <strong id="summary-robots">1</strong>
+        </div>
+        <div>
+          <span class="summary-label">RFID Tags</span>
+          <strong id="summary-tags">81</strong>
+        </div>
+        <div>
+          <span class="summary-label">Emergency</span>
+          <strong id="summary-emergency">Off</strong>
+        </div>
+      </section>
+
+      <section class="map-panel" aria-label="RFID map">
+        <div class="section-heading">
+          <h2 id="map-title">Team 3 RFID Map</h2>
+          <div id="map-legend" class="map-legend"><span class="legend-item"><span class="legend-swatch" style="background-color: rgb(49, 116, 86); --darkreader-inline-bgcolor: var(--darkreader-background-317456, #477460);" data-darkreader-inline-bgcolor=""></span><span>Team 3</span></span></div>
+        </div>
+        <div class="map-layout">
+          <div class="grid-wrap">
+            <div id="grid" class="grid" role="grid" aria-label="Robot grid"><div class="cell fertile  unexplored" role="gridcell" title="C3DFAA41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R9 C1</span></div><div class="cell sterile  unexplored" role="gridcell" title="671BAB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R9 C2</span></div><div class="cell fertile unexplored airlock-cell" role="gridcell" title="855AAB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R9 C3</span><div class="airlock-indicator">AIRLOCK A</div></div><div class="cell fertile  unexplored" role="gridcell" title="70CBAA41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R9 C4</span></div><div class="cell sterile  unexplored" role="gridcell" title="6E54A641 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R9 C5</span></div><div class="cell sterile  unexplored" role="gridcell" title="7447AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R9 C6</span></div><div class="cell fertile unexplored airlock-cell" role="gridcell" title="1B0AAB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R9 C7</span><div class="airlock-indicator">AIRLOCK B</div></div><div class="cell sterile  unexplored" role="gridcell" title="418BAB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R9 C8</span></div><div class="cell sterile  unexplored" role="gridcell" title="43DB2CDD - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R9 C9</span></div><div class="cell sterile  unexplored" role="gridcell" title="2802AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R8 C1</span></div><div class="cell fertile  unexplored" role="gridcell" title="7074AB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R8 C2</span></div><div class="cell sterile  unexplored" role="gridcell" title="DF54A941 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R8 C3</span></div><div class="cell sterile  unexplored" role="gridcell" title="03CCAA41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R8 C4</span></div><div class="cell sterile  unexplored" role="gridcell" title="1D65AA41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R8 C5</span></div><div class="cell sterile  unexplored" role="gridcell" title="F6B6A941 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R8 C6</span></div><div class="cell fertile  unexplored" role="gridcell" title="A42DAB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R8 C7</span></div><div class="cell sterile  unexplored" role="gridcell" title="F164AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R8 C8</span></div><div class="cell fertile  unexplored" role="gridcell" title="A335126A - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R8 C9</span></div><div class="cell fertile  unexplored" role="gridcell" title="4A12AB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R7 C1</span></div><div class="cell fertile  unexplored" role="gridcell" title="685EAB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R7 C2</span></div><div class="cell fertile  unexplored" role="gridcell" title="E7F7AA41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R7 C3</span></div><div class="cell sterile  unexplored" role="gridcell" title="9C01AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R7 C4</span></div><div class="cell fertile  unexplored" role="gridcell" title="E238A941 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R7 C5</span></div><div class="cell fertile  unexplored" role="gridcell" title="54C4AA41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R7 C6</span></div><div class="cell fertile  unexplored" role="gridcell" title="8CE5AA41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R7 C7</span></div><div class="cell fertile  unexplored" role="gridcell" title="4E4DAB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R7 C8</span></div><div class="cell fertile  unexplored" role="gridcell" title="28E3AA41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R7 C9</span></div><div class="cell fertile  unexplored" role="gridcell" title="BD47AB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R6 C1</span></div><div class="cell fertile  unexplored" role="gridcell" title="F94FAB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R6 C2</span></div><div class="cell fertile  unexplored" role="gridcell" title="CE9CAA41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R6 C3</span></div><div class="cell sterile  unexplored" role="gridcell" title="060DAB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R6 C4</span></div><div class="cell sterile  unexplored" role="gridcell" title="6666AA41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R6 C5</span></div><div class="cell sterile  unexplored" role="gridcell" title="B3DA2ADD - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R6 C6</span></div><div class="cell sterile  unexplored" role="gridcell" title="D3DDAA41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R6 C7</span></div><div class="cell sterile  unexplored" role="gridcell" title="0D46AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R6 C8</span></div><div class="cell sterile  unexplored" role="gridcell" title="A142AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R6 C9</span></div><div class="cell sterile  unexplored" role="gridcell" title="5663AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R5 C1</span></div><div class="cell sterile  unexplored" role="gridcell" title="0077AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R5 C2</span></div><div class="cell fertile  unexplored" role="gridcell" title="48CBAA41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R5 C3</span></div><div class="cell fertile  unexplored" role="gridcell" title="F85EAB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R5 C4</span></div><div class="cell fertile  unexplored" role="gridcell" title="4FC0AA41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R5 C5</span></div><div class="cell fertile  unexplored" role="gridcell" title="AE55AA41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R5 C6</span></div><div class="cell sterile  unexplored" role="gridcell" title="41AB4141 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R5 C7</span></div><div class="cell sterile  unexplored" role="gridcell" title="FCD6AA41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R5 C8</span></div><div class="cell fertile  unexplored" role="gridcell" title="D157AB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R5 C9</span></div><div class="cell sterile  unexplored" role="gridcell" title="9259AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R4 C1</span></div><div class="cell fertile  unexplored" role="gridcell" title="3D84AB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R4 C2</span></div><div class="cell sterile  unexplored" role="gridcell" title="70D7AA41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R4 C3</span></div><div class="cell fertile  unexplored" role="gridcell" title="B811AB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R4 C4</span></div><div class="cell sterile  unexplored" role="gridcell" title="3ACEAA41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R4 C5</span></div><div class="cell fertile  unexplored" role="gridcell" title="6C5FAB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R4 C6</span></div><div class="cell sterile  unexplored" role="gridcell" title="F459AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R4 C7</span></div><div class="cell sterile  unexplored" role="gridcell" title="47FAAA41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R4 C8</span></div><div class="cell fertile  unexplored" role="gridcell" title="773DAB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R4 C9</span></div><div class="cell sterile  unexplored" role="gridcell" title="7451AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R3 C1</span></div><div class="cell fertile  unexplored" role="gridcell" title="B493AB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R3 C2</span></div><div class="cell sterile  unexplored" role="gridcell" title="6D19AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R3 C3</span></div><div class="cell fertile  unexplored" role="gridcell" title="8A45AB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R3 C4</span></div><div class="cell fertile  unexplored" role="gridcell" title="9312AB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R3 C5</span></div><div class="cell sterile  unexplored" role="gridcell" title="AC5CAB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R3 C6</span></div><div class="cell fertile  unexplored" role="gridcell" title="E840AB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R3 C7</span></div><div class="cell sterile  unexplored" role="gridcell" title="F052AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R3 C8</span></div><div class="cell sterile  unexplored" role="gridcell" title="10C7AA41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R3 C9</span></div><div class="cell fertile  unexplored" role="gridcell" title="7C88AB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R2 C1</span></div><div class="cell fertile  unexplored" role="gridcell" title="2A60AB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R2 C2</span></div><div class="cell fertile  unexplored" role="gridcell" title="E74BA941 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R2 C3</span></div><div class="cell fertile  unexplored" role="gridcell" title="C47CAB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R2 C4</span></div><div class="cell sterile  unexplored" role="gridcell" title="BCCFAA41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R2 C5</span></div><div class="cell sterile  unexplored" role="gridcell" title="07F6AA41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R2 C6</span></div><div class="cell fertile  unexplored" role="gridcell" title="3385AB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R2 C7</span></div><div class="cell fertile  unexplored" role="gridcell" title="573DAB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R2 C8</span></div><div class="cell sterile  unexplored" role="gridcell" title="F642AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R2 C9</span></div><div class="cell fertile  unexplored" role="gridcell" title="F07EAB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R1 C1</span></div><div class="cell fertile  unexplored" role="gridcell" title="528AAB41 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R1 C2</span></div><div class="cell sterile  unexplored" role="gridcell" title="375CAB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R1 C3</span></div><div class="cell fertile  unexplored" role="gridcell" title="8145A941 - fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R1 C4</span></div><div class="cell sterile  unexplored" role="gridcell" title="76F0AA41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R1 C5</span></div><div class="cell sterile  unexplored" role="gridcell" title="F63BAB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R1 C6</span></div><div class="cell sterile  unexplored" role="gridcell" title="9017AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R1 C7</span></div><div class="cell sterile  unexplored" role="gridcell" title="390DAB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R1 C8</span></div><div class="cell sterile  unexplored" role="gridcell" title="1F27AB41 - not fertile - unexplored"><span class="fog-icon">❓</span><span class="cell-coord">R1 C9</span></div></div>
+            <div id="rfid-debug-row" class="rfid-debug-row" aria-label="RFID debug row"><div class="rfid-debug-label">Debug Row</div><div class="debug-cell sterile unexplored" title="Debug 1 - 23C9AA41"><span class="debug-cell-label">Debug 1</span><span class="debug-cell-id">23C9AA41</span></div><div class="debug-cell sterile unexplored" title="Debug 2 - 4B6DA641"><span class="debug-cell-label">Debug 2</span><span class="debug-cell-id">4B6DA641</span></div><div class="debug-cell sterile unexplored" title="Debug 3 - 75E3AA41"><span class="debug-cell-label">Debug 3</span><span class="debug-cell-id">75E3AA41</span></div></div>
+          </div>
+          <aside id="map-details" class="map-details"><div class="team-summary-row"><span class="legend-swatch" style="background-color: rgb(49, 116, 86); --darkreader-inline-bgcolor: var(--darkreader-background-317456, #477460);" data-darkreader-inline-bgcolor=""></span><strong>Team 3</strong><span>1 robots</span></div></aside>
+        </div>
+      </section>
+
+      <section class="debug-panel" aria-label="RFID debug">
+        <div class="section-heading">
+          <h2>RFID Debug</h2>
+          <span id="debug-updated">No team scans yet</span>
+        </div>
+        <div class="debug-grid">
+          <div>
+            <span class="summary-label">Current RFID ID</span>
+            <strong id="debug-tag-id">None</strong>
+          </div>
+          <div>
+            <span class="summary-label">Robot</span>
+            <strong id="debug-robot">None</strong>
+          </div>
+          <div>
+            <span class="summary-label">Map Result</span>
+            <strong id="debug-result">Waiting</strong>
+          </div>
+          <div>
+            <span class="summary-label">Cell</span>
+            <strong id="debug-cell">Unknown</strong>
+          </div>
+        </div>
+      </section>
+
+      <section id="teams" class="teams" aria-live="polite"><article class="team-panel "><div class="team-heading"><div><p class="eyebrow team-eyebrow">Team online</p><h2>Team 3</h2></div><div class="team-heading-actions"><span class="airlock-chip ">A ready - enter queue 0</span><span class="airlock-chip ">B ready - exit queue 0</span></div></div><div class="team-body"><div class="robot-list"><div class="robot-row"><div><div class="robot-title"><span class="legend-swatch" style="background-color: rgb(49, 116, 86); --darkreader-inline-bgcolor: var(--darkreader-background-317456, #477460);" data-darkreader-inline-bgcolor=""></span><span>Board Terminator</span><span class="badge warn">Stale</span></div><div class="robot-meta"><span>Position unknown</span><span>Heading unknown</span><span>Tag none</span><span>Control off</span><span>Seen 5m ago</span></div></div><div class="robot-actions"><button class="secondary-button" type="button" disabled="disabled">Enable</button></div></div></div></div></article></section>
+
+      <section class="events-panel" aria-label="Recent events">
+        <div class="section-heading">
+          <h2>Recent Events</h2>
+          <span id="last-update">Updated 11:42:58</span>
+        </div>
+        <ol id="events" class="events"><li><span>11:37:42</span><span>Robot 3/Terminator is offline.</span></li><li><span>11:36:59</span><span>Robot 3/Terminator is online.</span></li><li><span>11:36:56</span><span>Robot 3/Terminator is offline.</span></li><li><span>11:36:32</span><span>Robot 3/Terminator is online.</span></li><li><span>11:26:37</span><span>Robot 3/Terminator is offline.</span></li><li><span>11:17:33</span><span>Robot 3/Terminator registered.</span></li><li><span>11:17:33</span><span>Robot 3/Terminator is online.</span></li></ol>
+      </section>
+    </main>
+
+    <script src="Mini%20Messenger%20Robot%20Inspector_files/app.js"></script>
+  
+
+</body></html>

@@ -5,12 +5,21 @@
 #include <Wire.h>
 #include <LIS3MDL.h>
 #include <LSM6.h>
-#include <MFRC522_I2C.h>
+// #include <MFRC522_I2C.h>
 #include "Config.h"
 
 // ============================================================
 //  SENSORS  —  IR, UDS, RFID, IMU, bumper, light sensor
 // ============================================================
+
+// ── 1-second EMA helper ──────────────────────────────────────
+// alpha ≈ 1 / (freq * tau), at 50Hz and tau=1s → alpha ≈ 0.02
+struct EMA {
+  float val, alpha;
+  EMA(float a = 0.02f) : val(0), alpha(a) {}
+  float update(float raw) { return val = val * (1.0f - alpha) + raw * alpha; }
+  void reset(float v = 0) { val = v; }
+};
 
 // ── IR Array ────────────────────────────────────────────────
 // Manual charge-discharge read of 9 pins.
@@ -50,16 +59,12 @@ static void readRawIR(uint16_t* rawVals) {
   }
 }
 
-// Read all 9 IR sensors and return calibrated 0–1000 values.
-// Higher = more reflective (white), lower = darker (black line).
 void readIR(uint16_t vals[]) {
   uint16_t rawOff[IR_COUNT];
   uint16_t rawOn[IR_COUNT];
 
-  // Ambient reading (emitters off)
   readRawIR(rawOff);
 
-  // Reflected reading (emitters on)
   digitalWrite(IR_EMITTER_1, HIGH);
   digitalWrite(IR_EMITTER_2, HIGH);
   delayMicroseconds(200);
@@ -67,7 +72,6 @@ void readIR(uint16_t vals[]) {
   digitalWrite(IR_EMITTER_1, LOW);
   digitalWrite(IR_EMITTER_2, LOW);
 
-  // Ambient cancellation + calibration
   for (uint8_t i = 0; i < IR_COUNT; i++) {
     int32_t adj = (int32_t)rawOn[i] + IR_TIMEOUT_US - (int32_t)rawOff[i];
     if (adj > IR_TIMEOUT_US) adj = IR_TIMEOUT_US;
@@ -77,12 +81,10 @@ void readIR(uint16_t vals[]) {
   }
 }
 
-// Compute line centroid from calibrated IR values.
-// Returns position 0–8000 (×1000 of sensor index) or -1 if no line.
 int irCentroid(const uint16_t vals[]) {
   uint32_t sum = 0, weighted = 0;
   for (uint8_t i = 0; i < IR_COUNT; i++) {
-    uint16_t v = 1000 - vals[i];   // invert: high = dark (line)
+    uint16_t v = 1000 - vals[i];
     if (v > 50) {
       sum += v;
       weighted += v * i * 1000;
@@ -92,21 +94,82 @@ int irCentroid(const uint16_t vals[]) {
   return (int)(weighted / sum);
 }
 
-// ── Ultrasonic Distance Sensor ──────────────────────────────
-// Returns distance in cm, or UDS_MAX_CM on timeout.
+// ── Ultrasonic Distance Sensors ─────────────────────────────
+// Round-robin: reads one sensor per tick via pulseIn with a moderate
+// timeout, buffers 3 readings per sensor, outputs median-of-3.
+// Blocks for at most UDS_TIMEOUT_US µs per tick (~30ms worst case
+// for no echo; usually ~1-5ms for nearby objects).
 
-long readUDS(int trigPin, int echoPin) {
+class UDSManager {
+public:
+  enum { LEFT = 0, MID = 1, RIGHT = 2, NUM_SENSORS = 3 };
+
+  long distances[NUM_SENSORS];   // median-filtered readings (cm)
+
+  UDSManager() {
+    for (int i = 0; i < NUM_SENSORS; i++) {
+      distances[i] = UDS_MAX_CM;
+      bufPos[i] = 0;
+    }
+    currentSensor = 0;
+  }
+
+  // Call every main loop tick (~20ms).  Reads one UDS via pulseIn,
+  // buffers the result, then advances the round-robin.
+  void tick() {
+    int t = trigPin(currentSensor);
+    int e = echoPin(currentSensor);
+
+    digitalWrite(t, LOW);
+    delayMicroseconds(2);
+    digitalWrite(t, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(t, LOW);
+
+    long us = pulseIn(e, HIGH, UDS_TIMEOUT_US);
+    long val = (us == 0) ? UDS_MAX_CM : us / 58;
+
+    buf[currentSensor][bufPos[currentSensor]] = val;
+    bufPos[currentSensor] = (bufPos[currentSensor] + 1) % UDS_MEDIAN_N;
+
+    // Median of last UDS_MEDIAN_N samples
+    long s[UDS_MEDIAN_N];
+    for (int i = 0; i < UDS_MEDIAN_N; i++)
+      s[i] = buf[currentSensor][i];
+    for (int i = 0; i < UDS_MEDIAN_N - 1; i++)
+      for (int j = 0; j < UDS_MEDIAN_N - 1 - i; j++)
+        if (s[j] > s[j + 1]) { long t2 = s[j]; s[j] = s[j + 1]; s[j + 1] = t2; }
+    distances[currentSensor] = s[UDS_MEDIAN_N / 2];
+
+    currentSensor = (currentSensor + 1) % NUM_SENSORS;
+  }
+
+private:
+  int currentSensor;
+  static const int UDS_MEDIAN_N = 3;
+  long buf[NUM_SENSORS][UDS_MEDIAN_N];
+  int bufPos[NUM_SENSORS];
+
+  int trigPin(int idx) {
+    return idx == LEFT ? PIN_UDS_LT : idx == MID ? PIN_UDS_MT : PIN_UDS_RT;
+  }
+  int echoPin(int idx) {
+    return idx == LEFT ? PIN_UDS_LE : idx == MID ? PIN_UDS_ME : PIN_UDS_RE;
+  }
+};
+
+// Legacy single-shot for occasional use (still blocking — use sparingly).
+static long readUDS(int trigPin, int echoPin, unsigned long timeoutUs = 4000) {
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
   digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
-  long us = pulseIn(echoPin, HIGH, UDS_TIMEOUT_US);
+  long us = pulseIn(echoPin, HIGH, timeoutUs);
   if (us == 0) return UDS_MAX_CM;
-  return us / 58;   // microseconds → cm
+  return us / 58;
 }
 
-// Median filter for 5 samples (rejects UDS spikes)
 float medianOf5(float a, float b, float c, float d, float e) {
   float v[5] = {a, b, c, d, e};
   for (int i = 1; i < 5; i++) {
@@ -119,8 +182,8 @@ float medianOf5(float a, float b, float c, float d, float e) {
 }
 
 // ── RFID ────────────────────────────────────────────────────
-// Returns false if no tag present, true on success.
-// Fills buf with hex UID string.
+/*
+#include <MFRC522_I2C.h>
 
 bool readRFID(MFRC522_I2C& rfid, char* buf, size_t len) {
   if (!rfid.PICC_IsNewCardPresent()) return false;
@@ -137,16 +200,20 @@ bool readRFID(MFRC522_I2C& rfid, char* buf, size_t len) {
   buf[idx] = '\0';
   return true;
 }
+*/
 
 // ── IMU ─────────────────────────────────────────────────────
-// LIS3MDL magnetometer + LSM6 accelerometer for tilt-compensated heading.
+// LIS3MDL magnetometer + LSM6 accelerometer/gyro for
+// tilt-compensated heading with gyro-assisted dead-reckoning.
 
 struct IMUData {
   LIS3MDL mag;
   LSM6    imu;
-  float headingDeg;     // latest tilt-compensated heading
-  float magX, magY, magZ;   // gauss
-  float accX, accY, accZ;   // g
+  float headingDeg;     // tilt-compensated magnetometer heading
+  float gyroZ;          // degrees per second (yaw rate)
+  float magX, magY, magZ;
+  float accX, accY, accZ;
+  float pitch, roll;    // radians, for gravity subtraction
   bool  ok;
 };
 
@@ -178,6 +245,9 @@ void readIMU(IMUData& d) {
   d.accY = d.imu.a.y * (1.0f / 16384.0f);
   d.accZ = d.imu.a.z * (1.0f / 16384.0f);
 
+  // Gyro Z (yaw rate) in dps — LSM6 at ±2000 dps = 70 per dps
+  d.gyroZ = d.imu.g.z / 70.0f;
+
   // Hard-iron corrected magnetometer
   float mx = d.mag.m.x - ((int32_t)MAG_MIN_X + MAG_MAX_X) / 2.0f;
   float my = d.mag.m.y - ((int32_t)MAG_MIN_Y + MAG_MAX_Y) / 2.0f;
@@ -189,6 +259,10 @@ void readIMU(IMUData& d) {
   if (normA < 1.0f) return;
   ax /= normA; ay /= normA; az /= normA;
 
+  // Pitch and roll from normalised accelerometer (body frame)
+  d.pitch = atan2f(-ax, sqrtf(ay * ay + az * az));
+  d.roll  = atan2f(ay, az);
+
   // East = cross(mag, gravity)
   float ex = ay * mz - az * my;
   float ey = az * mx - ax * mz;
@@ -199,8 +273,6 @@ void readIMU(IMUData& d) {
 
   // North = cross(gravity, east)
   float nx = ay * ez - az * ey;
-  // float ny = az * ex - ax * ez;
-  // float nz = ax * ey - ay * ex;
 
   float h = atan2f(ex, nx) * 180.0f / PI;
   if (h < 0) h += 360.0f;
@@ -208,16 +280,18 @@ void readIMU(IMUData& d) {
 }
 
 // ── Bumper ──────────────────────────────────────────────────
-// TODO: wire to Giga GPIO. Current hardware uses a separate
-// circuit that drives the LED directly; robot cannot read it.
-// When connected, read with digitalRead(PIN_BUMPER).
+// TODO: wire to Giga GPIO.
 
-// bool readBumper() {
-//   return digitalRead(PIN_BUMPER) == LOW;  // active low?
-// }
+// ── Light Sensor ─────────────────────────────────────────────
+// Phototransistor on analog A11 — analogRead only (not digital-capable).
+// Higher value = more light (bonus points).
 
-// ── Light Sensor ────────────────────────────────────────────
-// TODO: bonus points — not implemented yet.
-// int readLight() { return 0; }
+void initLightSensor() {
+  // A8-A11 are analog-only — no pinMode needed, analogRead handles it.
+}
+
+int readLightSensor() {
+  return analogRead(PIN_LIGHT_SENSOR);
+}
 
 #endif

@@ -8,7 +8,7 @@
 #include <Wire.h>
 #include <Motoron.h>
 #include <Servo.h>
-#include <MFRC522_I2C.h>
+// #include <MFRC522_I2C.h>
 #include <MiniMessenger.h>
 
 #include "Config.h"
@@ -21,7 +21,7 @@
 // ── Hardware objects ────────────────────────────────────────
 MotoronI2C mc(0x10);
 Servo servo;
-MFRC522_I2C rfid(0x28, -1, &Wire1);
+// MFRC522_I2C rfid(0x28, -1, &Wire1);   // commenting out — may crash Giga
 
 // ── Modules ─────────────────────────────────────────────────
 ArenaMap arena;
@@ -30,37 +30,38 @@ IMUData imuData;
 MQTTManager mqtt("Terminator");   // TODO: change to your robot name
 MotionSM motion;                   // non-blocking motion controller
 
-// ── Encoder ISRs ───────────────────────────────────────────
+// ── Encoder polling (50 Hz, replaces ISR-based to avoid WiFi interference) ─
+// Reads both channels of each encoder and advances a full quadrature
+// state machine.  4× resolution vs single-edge ISR, no interrupts needed.
 volatile long encL = 0, encR = 0;
-void isr_LA() { encL += (digitalRead(PIN_ENC_LA) == digitalRead(PIN_ENC_LB)) ? 1 : -1; }
-void isr_LB() { encL += (digitalRead(PIN_ENC_LA) != digitalRead(PIN_ENC_LB)) ? 1 : -1; }
-void isr_RA() { encR += (digitalRead(PIN_ENC_RA) == digitalRead(PIN_ENC_RB)) ? 1 : -1; }
-void isr_RB() { encR += (digitalRead(PIN_ENC_RA) != digitalRead(PIN_ENC_RB)) ? 1 : -1; }
 
-// ── E-Stop ──────────────────────────────────────────────────
+static const int8_t QUAD_TABLE[16] = {
+  0,  1, -1,  0,
+ -1,  0,  0,  1,
+  1,  0,  0, -1,
+  0, -1,  1,  0
+};
+
+void pollEncoders() {
+  static int prevL = 0, prevR = 0;
+  int aL = digitalRead(PIN_ENC_LA);
+  int bL = digitalRead(PIN_ENC_LB);
+  int aR = digitalRead(PIN_ENC_RA);
+  int bR = digitalRead(PIN_ENC_RB);
+  int stateL = (aL << 1) | bL;
+  int stateR = (aR << 1) | bR;
+  encL += QUAD_TABLE[(prevL << 2) | stateL];
+  encR += QUAD_TABLE[(prevR << 2) | stateR];
+  prevL = stateL;
+  prevR = stateR;
+}
+
+// ── UDS after median (UDSManager) + EMA smoothing ─────────
+// EMA alpha = 0.2 → ~5-tick response (100ms at 50Hz)
+static EMA udsLFilter(0.2f), udsMFilter(0.2f), udsRFilter(0.2f);
+float filteredUdsL, filteredUdsM, filteredUdsR;
 volatile bool killed = false;
-
-bool handleEStop() {
-  static bool lastBtn = HIGH;
-  static unsigned long debounce = 0;
-  bool btn = digitalRead(PIN_KILL_BTN);
-  if (btn == HIGH && lastBtn == LOW && millis() - debounce > 50) {
-    debounce = millis();
-    killed = !killed;
-    if (killed) { setMotors(mc, 0, 0); digitalWrite(PIN_ACT_LED, HIGH); }
-    else        { digitalWrite(PIN_ACT_LED, LOW); }
-  }
-  lastBtn = btn;
-  return killed;
-}
-
-void waitForUnkill() {
-  while (killed) { handleEStop(); mqtt.loop(); delay(20); }
-}
-
-// ── PID tuning params (tuneable via MQTT) ───────────────────
-float pidKp = 0.5, pidKi = 0.0, pidKd = 0.0;
-int   pidMaxDiff = 40;
+bool motorsRunning = false;   // tracked for heading filter
 
 // ── State Machine ───────────────────────────────────────────
 enum State {
@@ -79,6 +80,28 @@ const char* stateNames[] = {
 
 State state = ST_INIT;
 
+bool handleEStop() {
+  static bool lastBtn = HIGH;
+  static unsigned long debounce = 0;
+  bool btn = digitalRead(PIN_KILL_BTN);
+  if (btn == HIGH && lastBtn == LOW && millis() - debounce > 50) {
+    debounce = millis();
+    killed = !killed;
+    if (killed) { setMotors(mc, 0, 0); digitalWrite(PIN_ACT_LED, HIGH); mqtt.sendState("KILLED"); }
+    else        { digitalWrite(PIN_ACT_LED, LOW); mqtt.sendState(stateNames[state]); }
+  }
+  lastBtn = btn;
+  return killed;
+}
+
+void waitForUnkill() {
+  while (killed) { handleEStop(); mqtt.loop(); delay(20); }
+}
+
+// ── PID tuning params (tuneable via MQTT) ───────────────────
+float pidKp = 30, pidKi = 1.0, pidKd = 0.0;
+int   pidMaxDiff = 120;
+
 // ── Hole memory ─────────────────────────────────────────────
 bool holePlanted[GRID_HOLES][GRID_HOLES] = {false};
 bool holeFertile[GRID_HOLES][GRID_HOLES];
@@ -92,10 +115,14 @@ unsigned long lastSensorRead = 0;
 unsigned long lastPublish = 0;
 unsigned long startTime = 0;
 
+// ── UDS manager (non-blocking round-robin) ──────────────────
+UDSManager uds;
+
 // ── Sensor state ────────────────────────────────────────────
 uint16_t irVals[IR_COUNT];
 int irCentroidVal = -1;
-long udsL, udsM, udsR;
+long udsL, udsM, udsR;   // latest median-filtered readings
+int lightVal;
 char rfidBuf[32];
 bool rfidSeen = false;
 
@@ -106,11 +133,14 @@ bool rfidSeen = false;
 void onMqttEnable() {
   killed = false;
   digitalWrite(PIN_ACT_LED, LOW);
+  mqtt.sendLog("enabled");
+  mqtt.sendState(stateNames[state]);
 }
 
 void onMqttDisable() {
   setMotors(mc, 0, 0);
   digitalWrite(PIN_ACT_LED, HIGH);
+  mqtt.sendState("DISABLED");
 }
 
 void onMqttPidTune(const String& key, float val) {
@@ -120,9 +150,18 @@ void onMqttPidTune(const String& key, float val) {
   else if (key == "md")  { pidMaxDiff = constrain((int)val, 0, 130); motion.maxDiff = pidMaxDiff; mqtt.sendLog("md set"); }
 }
 
-void onMqttHoleStatus(uint8_t row, uint8_t col, bool fertile) {
-  if (row < GRID_HOLES && col < GRID_HOLES)
+void onMqttHoleStatus(uint8_t row, uint8_t col, bool fertile, bool planted) {
+  if (row < GRID_HOLES && col < GRID_HOLES) {
     holeFertile[row][col] = fertile;
+    if (planted) holePlanted[row][col] = true;
+  }
+}
+
+void onMqttEmergency() {
+  setMotors(mc, 0, 0);
+  motion.stop();
+  digitalWrite(PIN_ACT_LED, HIGH);
+  mqtt.sendLog("EMERGENCY STOP");
 }
 
 void onMqttRevive(const char* robotId) {
@@ -134,20 +173,23 @@ void onMqttRevive(const char* robotId) {
 // hot.  The motion controller advances one step per pass.
 
 static void runTestLoop(unsigned long durationMs) {
+  lastPublish = 0; // force instant publish on first pass
   unsigned long endMs = millis() + durationMs;
   while (millis() < endMs) {
     mqtt.loop();
     if (handleEStop()) { setMotors(mc, 0, 0); motion.stop(); waitForUnkill(); break; }
-    if (!mqtt.enabled) { setMotors(mc, 0, 0); motion.stop(); break; }
+    if (!mqtt.isEffectivelyEnabled()) { setMotors(mc, 0, 0); motion.stop(); break; }
 
     // Full sensor read
     readIR(irVals);
     irCentroidVal = irCentroid(irVals);
-    udsL = readUDS(PIN_UDS_LT, PIN_UDS_LE);
-    udsM = readUDS(PIN_UDS_MT, PIN_UDS_ME);
-    udsR = readUDS(PIN_UDS_RT, PIN_UDS_RE);
+    pollEncoders();
+    uds.tick();
+    udsL = uds.distances[UDSManager::LEFT];
+    udsM = uds.distances[UDSManager::MID];
+    udsR = uds.distances[UDSManager::RIGHT];
     if (imuData.ok) readIMU(imuData);
-    loc.update(encL, encR, imuData.headingDeg, imuData.accX, imuData.accY);
+    loc.update(encL, encR, imuData.headingDeg, imuData.gyroZ, imuData.accX, imuData.accY, imuData.pitch, imuData.roll, motorsRunning);
 
     // Advance motion
     int mr = motion.tick(mc, irCentroidVal, (float)udsM, (float)udsL, (float)udsR);
@@ -158,7 +200,7 @@ static void runTestLoop(unsigned long durationMs) {
       lastPublish = millis();
       mqtt.sendPose(loc.pose.x, loc.pose.y, loc.pose.headingDeg);
       mqtt.sendState("TEST");
-      mqtt.sendSensorSnapshot(irVals, irCentroidVal, udsL, udsM, udsR, imuData.headingDeg);
+      mqtt.sendSensorSnapshot(irVals, irCentroidVal, udsL, udsM, udsR, imuData.headingDeg, lightVal);
     }
 
     delay(20);
@@ -168,6 +210,7 @@ static void runTestLoop(unsigned long durationMs) {
 }
 
 void onMqttTestCommand(const String& cmd) {
+  mqtt.sendLog("cmd received");
   Serial.print("Test: "); Serial.println(cmd);
 
   if (cmd.startsWith("FOLLOW_LINE")) {
@@ -183,16 +226,22 @@ void onMqttTestCommand(const String& cmd) {
   }
   else if (cmd.startsWith("FOLLOW_WALL")) {
     int base = 500, side = 1;
+    float targetCm = 8.0;
     float p = 1.5, i = 0.0, d = 0.0;
     int md = pidMaxDiff;
-    sscanf(cmd.c_str(), "FOLLOW_WALL:%d,%d,%f,%f,%f,%d", &base, &side, &p, &i, &d, &md);
-    motion.startWallFollow(base, side, p, i, d, md, 10000);
+    sscanf(cmd.c_str(), "FOLLOW_WALL:%d,%d,%f,%f,%f,%f,%d", &base, &side, &targetCm, &p, &i, &d, &md);
+    motion.startWallFollow(base, side, targetCm, p, i, d, md, 10000);
     state = ST_TEST;
     runTestLoop(10000);
     state = ST_IDLE;
     mqtt.sendLog("wall follow done");
   }
   else if (cmd == "DEPOSIT") {
+    // Read fresh sensors — callback runs from mqtt.loop() context
+    readIR(irVals);
+    irCentroidVal = irCentroid(irVals);
+    if (imuData.ok) readIMU(imuData);
+    pollEncoders();
     state = ST_TEST;
     runDeposit();
     state = ST_IDLE;
@@ -239,7 +288,7 @@ void runPlan() {
   navTargetRow = bestIdx / GRID_HOLES;
   navTargetCol = bestIdx % GRID_HOLES;
   navTarget = arena.holeCentre(navTargetRow, navTargetCol);
-  state = ST_NAVIGATE;
+  // state = ST_NAVIGATE; // disabled navigating until Map.h is filled in and we can do that properly.
 }
 
 // ── Navigation (non-blocking, runs every loop) ──────────────
@@ -269,7 +318,7 @@ void runNavigate() {
     return;
   }
 
-  if (obstacleAhead()) { setMotors(mc, 0, 0); state = ST_AVOID; return; }
+  if (obstacleAhead(filteredUdsM)) { setMotors(mc, 0, 0); state = ST_AVOID; return; }
 
   int baseSpeed = constrain(MOTOR_MIN + 80, MOTOR_MIN, MOTOR_MAX);
   bool lineVisible = (irCentroidVal >= 0);
@@ -301,23 +350,20 @@ void runAvoid() {
   if (fresh) { phase = TURN_RIGHT; fresh = false; }
 
   if (phase == TURN_RIGHT) {
-    long ticks45 = (long)(PI * TRACK_BASE_MM * 45.0 / 360.0 * TICKS_PER_M / 1000.0 / 3.0);
     if (motion.type == MotionSM::IDLE) {
-      motion.startTurn(-1, 600, ticks45);
+      motion.startTurn(-1, TURN_SPEED, ticksForTurn(45));
       phase = GO;
     }
   }
   else if (phase == GO) {
     if (motion.type == MotionSM::IDLE) {
-      long ticks30cm = (long)(0.30 * TICKS_PER_M);
-      motion.startStraight(500, ticks30cm);
+      motion.startStraight(MOVE_SPEED, ticksForDistance(300));  // 300mm
       phase = DONE;
     }
   }
   else {  // DONE
     if (motion.type == MotionSM::IDLE) {
-      long ticks45 = (long)(PI * TRACK_BASE_MM * 45.0 / 360.0 * TICKS_PER_M / 1000.0 / 3.0);
-      motion.startTurn(1, 600, ticks45);
+      motion.startTurn(1, TURN_SPEED, ticksForTurn(45));
       phase = TURN_RIGHT;
       fresh = true;
       state = ST_PLAN;
@@ -332,8 +378,9 @@ void runDeposit() {
   bool holeConfirmed = false;
   uint8_t holeRow = 0, holeCol = 0;
 
-  if (readRFID(rfid, rfidBuf, sizeof(rfidBuf)))
-    holeConfirmed = arena.rfidToHole(rfidBuf, holeRow, holeCol);
+  // RFID disabled — library suspect
+  // if (readRFID(rfid, rfidBuf, sizeof(rfidBuf)))
+  //   holeConfirmed = arena.rfidToHole(rfidBuf, holeRow, holeCol);
 
   if (!holeConfirmed) {
     int idx = arena.nearestHole((int16_t)loc.pose.x, (int16_t)loc.pose.y);
@@ -365,11 +412,11 @@ void runDeposit() {
   delay(300);
 
   // Wiggle forward/backward to clear chute (non-blocking via motion)
-  motion.startStraight(baseSpeed, (long)(0.03 * TICKS_PER_M));
+  motion.startStraight(baseSpeed, ticksForDistance(30));    // 30mm wiggle
   while (motion.tick(mc) == MotionSM::RUNNING) {
     mqtt.loop(); delay(20);
   }
-  motion.startStraight(-baseSpeed, (long)(0.03 * TICKS_PER_M));
+  motion.startStraight(-baseSpeed, ticksForDistance(30));
   while (motion.tick(mc) == MotionSM::RUNNING) {
     mqtt.loop(); delay(20);
   }
@@ -377,6 +424,9 @@ void runDeposit() {
   lockSeeds(servo);
 
   holePlanted[holeRow][holeCol] = true;
+  // Send to server via standard protocol
+  mqtt.sendSeedPlanted("POS");   // TODO: use actual RFID tag data
+  // Broadcast to dashboard
   mqtt.sendHoleStatus(holeRow, holeCol, true, holeFertile[holeRow][holeCol]);
   mqtt.sendLog("seed planted");
 }
@@ -393,19 +443,32 @@ void runReturnBase() {
 // ============================================================
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   delay(1500);
   Serial.println("\n===== MARTIAN ROBOTICS PROJECT =====");
 
-  // ── Encoder ISRs ─────────────────────────────────────────
+  // ── MQTT (before Wire1, matches working test order) ──────
+  mqtt.onEnable     = onMqttEnable;
+  mqtt.onDisable    = onMqttDisable;
+  mqtt.onEmergency  = onMqttEmergency;
+  mqtt.onPidTune    = onMqttPidTune;
+  mqtt.onHoleStatus = onMqttHoleStatus;
+  mqtt.onRevive     = onMqttRevive;
+  mqtt.onTestCommand = onMqttTestCommand;
+  Serial.print("MQTT: connecting");
+  mqtt.begin();
+  for (int i = 0; i < 50 && !mqtt.isConnected(); i++) {
+    mqtt.loop();
+    Serial.print(".");
+    delay(100);
+  }
+  Serial.println(mqtt.isConnected() ? " connected" : " timeout — will retry in loop");
+
+  // ── Encoder pins (polled in 50 Hz loop — no ISRs to avoid WiFi interference)
   pinMode(PIN_ENC_LA, INPUT_PULLUP);
   pinMode(PIN_ENC_LB, INPUT_PULLUP);
   pinMode(PIN_ENC_RA, INPUT_PULLUP);
   pinMode(PIN_ENC_RB, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(PIN_ENC_LA), isr_LA, RISING);
-  attachInterrupt(digitalPinToInterrupt(PIN_ENC_LB), isr_LB, RISING);
-  attachInterrupt(digitalPinToInterrupt(PIN_ENC_RA), isr_RA, RISING);
-  attachInterrupt(digitalPinToInterrupt(PIN_ENC_RB), isr_RB, RISING);
 
   // ── Motoron ──────────────────────────────────────────────
   Wire1.begin();
@@ -439,19 +502,13 @@ void setup() {
   lockSeeds(servo);
 
   // ── RFID ─────────────────────────────────────────────────
-  rfid.PCD_Init();
+  // rfid.PCD_Init();     // commented out — MFRC522 crash suspect
 
   // ── IMU ──────────────────────────────────────────────────
   initIMU(imuData);
 
-  // ── MQTT ─────────────────────────────────────────────────
-  mqtt.onEnable     = onMqttEnable;
-  mqtt.onDisable    = onMqttDisable;
-  mqtt.onPidTune    = onMqttPidTune;
-  mqtt.onHoleStatus = onMqttHoleStatus;
-  mqtt.onRevive     = onMqttRevive;
-  mqtt.onTestCommand = onMqttTestCommand;
-  mqtt.begin();
+  // ── Light Sensor ──────────────────────────────────────────
+  initLightSensor();
 
   // ── Initial pose ─────────────────────────────────────────
   loc.setPose(0, 0, 0);
@@ -471,54 +528,87 @@ void setup() {
 
 void loop() {
   mqtt.loop();
+
+  // Serial commands for offline testing (no server)
+  if (Serial.available() > 0) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    if (cmd == "enable") {
+      mqtt.serverAllow = true;
+      mqtt.dashboardDesired = true;
+      mqtt.applyState();
+      Serial.println("Serial: enabled (serverAllow forced)");
+    } else if (cmd == "disable") {
+      mqtt.serverAllow = false;
+      mqtt.dashboardDesired = false;
+      mqtt.applyState();
+      Serial.println("Serial: disabled");
+    } else if (cmd == "kill") {
+      killed = true;
+      setMotors(mc, 0, 0);
+      digitalWrite(PIN_ACT_LED, HIGH);
+    }
+  }
+
+  static bool wasConnected = false;
+  if (!wasConnected && mqtt.isConnected()) {
+    Serial.println("MQTT: connected");
+    wasConnected = true;
+  }
+
   handleEStop();
-
-  if (killed) {
-    setMotors(mc, 0, 0); motion.stop();
-    digitalWrite(PIN_ACT_LED, HIGH);
-    waitForUnkill();
-    digitalWrite(PIN_ACT_LED, LOW);
-    return;
-  }
-
-  if (!mqtt.enabled) {
-    setMotors(mc, 0, 0); motion.stop();
-    delay(20);
-    return;
-  }
 
   unsigned long now = millis();
 
-  // ── 50 Hz: full sensor read ──────────────────────────────
+  // ── 50 Hz: full sensor read (always, even when killed) ──
   if (now - lastSensorRead >= 20) {
     lastSensorRead = now;
 
     readIR(irVals);
     irCentroidVal = irCentroid(irVals);
-    udsL = readUDS(PIN_UDS_LT, PIN_UDS_LE);
-    udsM = readUDS(PIN_UDS_MT, PIN_UDS_ME);
-    udsR = readUDS(PIN_UDS_RT, PIN_UDS_RE);
+    pollEncoders();
+    uds.tick();
+    udsL = uds.distances[UDSManager::LEFT];
+    udsM = uds.distances[UDSManager::MID];
+    udsR = uds.distances[UDSManager::RIGHT];
+    filteredUdsL = udsLFilter.update((float)udsL);
+    filteredUdsM = udsMFilter.update((float)udsM);
+    filteredUdsR = udsRFilter.update((float)udsR);
     if (imuData.ok) readIMU(imuData);
-    loc.update(encL, encR, imuData.headingDeg, imuData.accX, imuData.accY);
+    loc.update(encL, encR, imuData.headingDeg, imuData.gyroZ, imuData.accX, imuData.accY, imuData.pitch, imuData.roll, motorsRunning);
+    lightVal = readLightSensor();
 
-    // RFID check
-    if (readRFID(rfid, rfidBuf, sizeof(rfidBuf))) {
-      rfidSeen = true;
-      uint8_t r, c;
-      if (arena.rfidToHole(rfidBuf, r, c)) {
-        loc.correctFromRFID(arena, r, c);
-        mqtt.sendLog("RFID correction");
-      }
-    }
+    // RFID: tag is 8-char opaque ID → send to server for resolution
+    // if (readRFID(rfid, rfidBuf, sizeof(rfidBuf))) {
+    //   rfidSeen = true;
+    //   mqtt.sendIsFertile(rfidBuf);
+    // }
   }
 
-  // ── 2 Hz: MQTT publish ───────────────────────────────────
-  if (now - lastPublish >= 500) {
+  // ── 5 Hz: MQTT publish (always, even when killed) ────────
+  if (now - lastPublish >= 200) {
     lastPublish = now;
     mqtt.sendPose(loc.pose.x, loc.pose.y, loc.pose.headingDeg);
-    mqtt.sendState(stateNames[state]);
-    mqtt.sendSensorSnapshot(irVals, irCentroidVal, udsL, udsM, udsR,
-                            imuData.headingDeg);
+    if (killed) {
+      mqtt.sendState("KILLED");
+    } else if (!mqtt.isEffectivelyEnabled()) {
+      mqtt.sendState("DISABLED");
+    } else {
+      mqtt.sendState(stateNames[state]);
+    }
+    mqtt.sendSensorSnapshot(irVals, irCentroidVal, (long)filteredUdsL, (long)filteredUdsM, (long)filteredUdsR,
+                            imuData.headingDeg, lightVal);
+  }
+
+  // ── When killed: stop actuators only, sensors still stream ──
+  if (killed) {
+    setMotors(mc, 0, 0); motion.stop();
+    return;
+  }
+
+  if (!mqtt.isEffectivelyEnabled()) {
+    setMotors(mc, 0, 0); motion.stop();
+    return;
   }
 
   // ── Tick active motion (non-blocking) ────────────────────
@@ -529,8 +619,6 @@ void loop() {
         mqtt.sendLog("motion blocked");
         motion.stop();
       }
-      // Motion done — keep current state; the next switch case
-      // below will run if state expects motion completion.
     }
   }
 
@@ -549,6 +637,4 @@ void loop() {
       case ST_TEST:        /* handled by callback */ break;
     }
   }
-
-  delay(5);
 }

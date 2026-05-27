@@ -8,14 +8,13 @@
 
 // ── Motor Control ───────────────────────────────────────────
 // Motoron M3S550 on I2C Wire1, address 0x10
-// M1 = right track, M2 = left track (physically swapped).
-// M2 polarity reversed (negative = forward).
-const int PIN_ENC_LA = 4;   // left track encoder
-const int PIN_ENC_LB = 5;
-const int PIN_ENC_RA = 2;   // right track encoder
-const int PIN_ENC_RB = 3;
+// Left = M1 (positive = forward), Right = M2 (negative = forward)
+const int PIN_ENC_LA = 2;
+const int PIN_ENC_LB = 3;
+const int PIN_ENC_RA = 4;
+const int PIN_ENC_RB = 5;
 
-const float TICKS_PER_M = 3607.0;   // Calculated. It was 5360
+const float TICKS_PER_M = 5360.0;   // TODO: calibrate on arena
 const float TRACK_BASE_MM = 152.0;  // distance between tread centres
 const int MOTOR_MIN = 300;           // below this, friction wins
 const int MOTOR_MAX = 660;           // absolute ceiling
@@ -42,7 +41,7 @@ const float UDS_LEFT_YAW = -32.0;
 const float UDS_MID_YAW   =  0.0;
 const float UDS_RIGHT_YAW = 32.0;
 const float UDS_CONE_DEG  = 20.0;   // half-angle of detection cone
-const int   UDS_TIMEOUT_US = 8000;    // pulseIn timeout per sensor (µs, ≈138cm)
+const int   UDS_TIMEOUT_US = 30000;
 const int   UDS_MAX_CM     = 500;
 
 // Stopping distance for obstacle avoidance (mm)
@@ -63,21 +62,20 @@ const int PIN_ACT_LED  = 39;    // HIGH = red (stopped), LOW = green (running)
 
 // ── IMU ─────────────────────────────────────────────────────
 // LIS3MDL (mag) + LSM6 (accel/gyro) on Wire
-// Hard-iron calibration (recalibrated)
-const int16_t MAG_MIN_X = -7078;
-const int16_t MAG_MIN_Y =  2593;
-const int16_t MAG_MIN_Z =   91;
-const int16_t MAG_MAX_X = -3234;
-const int16_t MAG_MAX_Y =  6347;
-const int16_t MAG_MAX_Z =  4698;
+// Hard-iron calibration from trial1_demo
+const int16_t MAG_MIN_X = -8808;
+const int16_t MAG_MIN_Y =  3318;
+const int16_t MAG_MIN_Z =  -521;
+const int16_t MAG_MAX_X = -3540;
+const int16_t MAG_MAX_Y =  9119;
+const int16_t MAG_MAX_Z =  5024;
 
 // ── Bumper (TODO: confirm pin once wired) ───────────────────
 // Digital switch on front bumper — TODO: wire to Giga GPIO
 // const int PIN_BUMPER = xx;
 
-// ── Light Sensor ─────────────────────────────────────────────
-// Phototransistor on Giga analog pin A11 (bonus points)
-#define PIN_LIGHT_SENSOR A11
+// ── Light Sensor (TODO: bonus points) ───────────────────────
+// const int PIN_LIGHT = xx;
 
 // ── Arena Constants ─────────────────────────────────────────
 const float ARENA_SIZE_MM = 2500.0;
@@ -92,29 +90,5 @@ const float BASE_TO_ARENA_Y = 0.0;
 
 // ── Motor Acceleration / Deceleration ───────────────────────
 const int MOTOR_RAMP = 800;   // Motoron max accel/decel
-
-// ── Navigation Speeds ───────────────────────────────────────
-const int MOVE_SPEED = 500;    // constant speed for straight-line moves
-const int TURN_SPEED = 550;    // constant speed for tank turns (higher to break friction)
-
-// ── Motor Bias ──────────────────────────────────────────────
-// Left track is ~4.2% stronger; compensate by giving right track more power.
-const float BIAS_RIGHT = 1.042f;
-
-// ── Tick Calibration (linear regression: ticks = m * amount + c) ─────
-// Update these after running tick_calibration and fitting a line.
-// amount is in millimetres for distance, degrees for turn.
-const float DIST_TICK_M = 0.3607f;  // ticks per mm  (baseline: TICKS_PER_M/1000)
-const float DIST_TICK_C = 0.0f;     // overshoot offset (ticks)
-const float TURN_TICK_M = 5.83f;    // ticks per degree (baseline: TICKS_PER_90/90)
-const float TURN_TICK_C = 0.0f;     // overshoot offset (ticks)
-
-// Convenience wrappers
-static inline long ticksForDistance(float mm) {
-  return (long)(DIST_TICK_M * mm + DIST_TICK_C);
-}
-static inline long ticksForTurn(float degrees) {
-  return (long)(TURN_TICK_M * degrees + TURN_TICK_C);
-}
 
 #endif

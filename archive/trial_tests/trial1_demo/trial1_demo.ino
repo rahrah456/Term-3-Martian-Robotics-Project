@@ -799,7 +799,7 @@ void demoServo() {
 // ============================================================
 void demoOpenLoop() {
   Serial.println("\n--- Speed/Heading Open Loop ---");
-  Serial.println("Fwd 800 -> Fwd 600 -> Turn L -> Turn R -> U-turn");
+  // Serial.println("Fwd 800 -> Fwd 600 -> Turn L -> Turn R -> U-turn");
   Serial.println("Place robot with space. Starting in 3s...");
   delay(3000);
 
@@ -825,22 +825,22 @@ void demoOpenLoop() {
     Serial.println();
   };
 
-  runOL(800, 800, TICKS_10CM, "Fwd 800");
+  runOL(660, 660, TICKS_10CM*100, "Fwd 660");
   if (killed) return;
   delay(500);
-  runOL(-800, -800, TICKS_10CM, "Back 800");
-  if (killed) return;
-  delay(500);
-  runOL(600, 600, TICKS_10CM, "Fwd 600");
-  if (killed) return;
-  delay(500);
-  runOL(-800, 800, TICKS_TURN_90, "Turn left");
-  if (killed) return;
-  delay(500);
-  runOL(800, -800, TICKS_TURN_90, "Turn right");
-  if (killed) return;
-  delay(500);
-  runOL(-800, 800, TICKS_TURN_180, "U-turn");
+  // runOL(-660, -660, TICKS_10CM, "Back 660");
+  // if (killed) return;
+  // delay(500);
+  // runOL(600, 600, TICKS_10CM, "Fwd 600");
+  // if (killed) return;
+  // delay(500);
+  // runOL(-660, 660, TICKS_TURN_90, "Turn left");
+  // if (killed) return;
+  // delay(500);
+  // runOL(660, -660, TICKS_TURN_90, "Turn right");
+  // if (killed) return;
+  // delay(500);
+  // runOL(-660, 660, TICKS_TURN_180, "U-turn");
 
   if (!killed) Serial.println("Open loop demo done");
 }

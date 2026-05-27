@@ -85,11 +85,8 @@ public:
   }
 
   // ── Convert RFID tag data to hole coordinates ──────────────
-  // Tags are 8-character opaque IDs (e.g. "A1B2C3D4").
-  // The tag is sent to the server via sendIsFertile(), and the
-  // server replies with isFertileReply containing (x, y) grid
-  // coordinates.  This function is therefore NOT used for live
-  // operation — kept as a local fallback in case server is down.
+  // TODO: determine actual tag format once arena is available.
+  // Options: "row,col" string, hex UID lookup, arena mm coords.
   // Returns true on success, fills (r, c).
   bool rfidToHole(const char* tagData, uint8_t& outRow, uint8_t& outCol) const {
     // Attempt to parse "row,col" or "row col"
