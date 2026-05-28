@@ -73,7 +73,7 @@ struct PIDSpeed {
 
 struct MotionSM {
   enum Result { DONE = 0, RUNNING = -1, TIMEOUT = 1, BLOCKED = 2 };
-  enum Type { IDLE, STRAIGHT, TURN, LINE_FOLLOW, WALL_FOLLOW, CENTRE_TUNNEL };
+  enum Type { IDLE, STRAIGHT, TURN, LINE_FOLLOW, WALL_FOLLOW, CENTRE_TUNNEL, AVOID_OBSTACLE };
 
   Type type = IDLE;
   int result = DONE;
@@ -104,6 +104,10 @@ struct MotionSM {
   bool wasHole = false;
   unsigned long holeStart = 0;
   int holdL = 0, holdR = 0;
+
+  // Avoidance sequence sub-states
+  int avoidPhase; // 0 = turn away, 1 = hug side using sensor, 2 = clear and turn back
+  unsigned long phaseStartMs;
 
   // Turn accel tracking: set to 180000 during turns, restore to 800 after
   bool turnAccelSet = false;
@@ -164,6 +168,15 @@ struct MotionSM {
     result = RUNNING;
   }
 
+  void startAvoid(int speed) {
+    type = AVOID_OBSTACLE;
+    result = RUNNING;
+    startMs = millis();
+    phaseStartMs = millis();
+    baseSpeed = speed;
+    avoidPhase = 0;
+    encL = 0; encR = 0;
+  }
   void stop() {
     type = IDLE; result = DONE;
   }
@@ -307,6 +320,61 @@ struct MotionSM {
         int left  = constrain(baseSpeed + (int)correction, MOTOR_MIN, MOTOR_MAX);
         int right = constrain(baseSpeed - (int)correction, MOTOR_MIN, MOTOR_MAX);
         setMotors(mc, left, right);
+        return RUNNING;
+      }
+
+      // ── SENSOR-DRIVEN OBSTACLE DETOUR SEQUENCE ─────────────────
+      case AVOID_OBSTACLE: {
+        switch (avoidPhase) {
+          case 0: {
+            // Phase 0: Spin counter-clockwise until the middle path clears up
+            if (udsMidCm < 25.0f && (millis() - phaseStartMs < 2000)) {
+              setMotors(mc, -baseSpeed, baseSpeed);
+            } else {
+              avoidPhase = 1;
+              phaseStartMs = millis();
+            }
+            break;
+          }
+
+          case 1: {
+            // Phase 1: Hug the side of the obstacle using the Right UDS sensor feedback
+            // If the right sensor reads a very large value, the robot has cleared the box!
+            if (udsRightCm > 35.0f) {
+              avoidPhase = 2;
+              phaseStartMs = millis();
+              break;
+            }
+
+            // Proportional control to stay exactly 15.0 cm away from the obstacle side
+            float targetDistance = 15.0f;
+            float error = udsRightCm - targetDistance;
+            float kpSide = 12.0f; // Soft correction adjustments
+            int correction = (int)(error * kpSide);
+            
+            // Steer relative to the obstacle on its right side
+            int leftMotor  = constrain(baseSpeed - correction, MOTOR_MIN, MOTOR_MAX);
+            int rightMotor = constrain(baseSpeed + correction, MOTOR_MIN, MOTOR_MAX);
+            setMotors(mc, leftMotor, rightMotor);
+            break;
+          }
+
+          case 2: {
+            // Phase 2: Give it a moment to clear the back corner, then swing back towards course
+            unsigned long duration = millis() - phaseStartMs;
+            if (duration < 500) {
+              // Drive straight past the tail edge
+              setMotors(mc, baseSpeed, baseSpeed);
+            } else if (duration < 1100) {
+              // Swing back clockwise to align with original path orientation
+              setMotors(mc, baseSpeed, -baseSpeed);
+            } else {
+              setMotors(mc, 0, 0);
+              return result = DONE; // Detour complete!
+            }
+            break;
+          }
+        }
         return RUNNING;
       }
 

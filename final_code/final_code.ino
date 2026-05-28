@@ -253,6 +253,10 @@ void onMqttTestCommand(const String& cmd) {
     state = ST_IDLE;
     mqtt.sendLog("wall follow done");
   }
+  else if (cmd.startsWith("OBSTACLE_AVOIDANCE")) {
+    mqtt.sendLog("Testing sensor-driven detour...");
+    motion.startAvoid(MOVE_SPEED);
+  }
   else if (cmd == "DEPOSIT") {
     // Read fresh sensors — callback runs from mqtt.loop() context
     readIR(irVals);
@@ -632,8 +636,8 @@ void loop() {
     int mr = motion.tick(mc, irCentroidVal, (float)udsM, (float)udsL, (float)udsR);
     if (mr != MotionSM::RUNNING) {
       if (mr == MotionSM::BLOCKED) {
-        mqtt.sendLog("motion blocked");
-        motion.stop();
+        mqtt.sendLog("Obstacle detected! Commencing active UDS detour.");
+        motion.startAvoid(MOVE_SPEED); 
       }
     }
   }
