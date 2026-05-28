@@ -8,7 +8,7 @@
 #include <Wire.h>
 #include <Motoron.h>
 #include <Servo.h>
-// #include <MFRC522_I2C.h>
+#include <MFRC522_I2C.h>
 #include <MiniMessenger.h>
 
 #include "Config.h"
@@ -21,7 +21,7 @@
 // ── Hardware objects ────────────────────────────────────────
 MotoronI2C mc(0x10);
 Servo servo;
-// MFRC522_I2C rfid(0x28, -1, &Wire1);   // commenting out — may crash Giga
+MFRC522_I2C rfid(0x28, -1, &Wire1);
 
 // ── Modules ─────────────────────────────────────────────────
 ArenaMap arena;
@@ -96,6 +96,23 @@ bool handleEStop() {
 
 void waitForUnkill() {
   while (killed) { handleEStop(); mqtt.loop(); delay(20); }
+}
+
+// ── RFID read ────────────────────────────────────────────────
+bool readRFID(char* buf, size_t len) {
+  if (!rfid.PICC_IsNewCardPresent()) return false;
+  if (!rfid.PICC_ReadCardSerial()) return false;
+  size_t idx = 0;
+  for (byte i = 0; i < rfid.uid.size; i++) {
+    if (rfid.uid.uidByte[i] < 0x10 && idx < len - 1) buf[idx++] = '0';
+    int n = snprintf(&buf[idx], len - idx, "%X", rfid.uid.uidByte[i]);
+    if (n <= 0) break;
+    idx += n;
+    if (i < rfid.uid.size - 1 && idx < len - 1) buf[idx++] = ' ';
+    if (idx >= len - 1) break;
+  }
+  buf[idx] = '\0';
+  return true;
 }
 
 // ── PID tuning params (tuneable via MQTT) ───────────────────
@@ -378,9 +395,8 @@ void runDeposit() {
   bool holeConfirmed = false;
   uint8_t holeRow = 0, holeCol = 0;
 
-  // RFID disabled — library suspect
-  // if (readRFID(rfid, rfidBuf, sizeof(rfidBuf)))
-  //   holeConfirmed = arena.rfidToHole(rfidBuf, holeRow, holeCol);
+  if (readRFID(rfidBuf, sizeof(rfidBuf)))
+    holeConfirmed = arena.rfidToHole(rfidBuf, holeRow, holeCol);
 
   if (!holeConfirmed) {
     int idx = arena.nearestHole((int16_t)loc.pose.x, (int16_t)loc.pose.y);
@@ -425,7 +441,7 @@ void runDeposit() {
 
   holePlanted[holeRow][holeCol] = true;
   // Send to server via standard protocol
-  mqtt.sendSeedPlanted("POS");   // TODO: use actual RFID tag data
+  mqtt.sendSeedPlanted(rfidBuf);
   // Broadcast to dashboard
   mqtt.sendHoleStatus(holeRow, holeCol, true, holeFertile[holeRow][holeCol]);
   mqtt.sendLog("seed planted");
@@ -502,7 +518,7 @@ void setup() {
   lockSeeds(servo);
 
   // ── RFID ─────────────────────────────────────────────────
-  // rfid.PCD_Init();     // commented out — MFRC522 crash suspect
+  rfid.PCD_Init();
 
   // ── IMU ──────────────────────────────────────────────────
   initIMU(imuData);
@@ -579,10 +595,10 @@ void loop() {
     lightVal = readLightSensor();
 
     // RFID: tag is 8-char opaque ID → send to server for resolution
-    // if (readRFID(rfid, rfidBuf, sizeof(rfidBuf))) {
-    //   rfidSeen = true;
-    //   mqtt.sendIsFertile(rfidBuf);
-    // }
+    if (readRFID(rfidBuf, sizeof(rfidBuf))) {
+      rfidSeen = true;
+      mqtt.sendIsFertile(rfidBuf);
+    }
   }
 
   // ── 5 Hz: MQTT publish (always, even when killed) ────────

@@ -182,25 +182,7 @@ float medianOf5(float a, float b, float c, float d, float e) {
 }
 
 // ── RFID ────────────────────────────────────────────────────
-/*
-#include <MFRC522_I2C.h>
-
-bool readRFID(MFRC522_I2C& rfid, char* buf, size_t len) {
-  if (!rfid.PICC_IsNewCardPresent()) return false;
-  if (!rfid.PICC_ReadCardSerial()) return false;
-  size_t idx = 0;
-  for (byte i = 0; i < rfid.uid.size; i++) {
-    if (rfid.uid.uidByte[i] < 0x10 && idx < len - 1) buf[idx++] = '0';
-    int n = snprintf(&buf[idx], len - idx, "%X", rfid.uid.uidByte[i]);
-    if (n <= 0) break;
-    idx += n;
-    if (i < rfid.uid.size - 1 && idx < len - 1) buf[idx++] = ' ';
-    if (idx >= len - 1) break;
-  }
-  buf[idx] = '\0';
-  return true;
-}
-*/
+// readRFID() defined in final_code.ino (needs global rfid object).
 
 // ── IMU ─────────────────────────────────────────────────────
 // LIS3MDL magnetometer + LSM6 accelerometer/gyro for

@@ -97,7 +97,9 @@ public:
     }
 
     // ── Position: encoder primary ───────────────────────────
-    float fwdDistMM = ((float)(dL + dR) / 2.0f) / TICKS_PER_M * 1000.0f;
+    float avgTicks = (dL + dR) / 2.0f;
+    float fwdDistMM = ticksToMm((long)(avgTicks >= 0 ? avgTicks : -avgTicks));
+    if (avgTicks < 0) fwdDistMM = -fwdDistMM;
     float encVel = fwdDistMM / dt;   // mm/s
 
     pose.x += fwdDistMM * sinf(rad);

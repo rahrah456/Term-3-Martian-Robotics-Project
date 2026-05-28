@@ -105,6 +105,16 @@ struct MotionSM {
   unsigned long holeStart = 0;
   int holdL = 0, holdR = 0;
 
+  // Turn accel tracking: set to 180000 during turns, restore to 800 after
+  bool turnAccelSet = false;
+
+  void setAccel(MotoronI2C& mc, int val) {
+    mc.setMaxAcceleration(1, val);
+    mc.setMaxDeceleration(1, val);
+    mc.setMaxAcceleration(2, val);
+    mc.setMaxDeceleration(2, val);
+  }
+
   // ── Start helpers ─────────────────────────────────────────
 
   void startStraight(int spd, long tgt) {
@@ -113,6 +123,7 @@ struct MotionSM {
     pidL.reset(encL); pidR.reset(encR);
     startL = encL; startR = encR;
     result = RUNNING;
+    turnAccelSet = false;
   }
 
   void startTurn(int d, int spd, long tgt) {
@@ -121,6 +132,7 @@ struct MotionSM {
     pidL.reset(encL); pidR.reset(encR);
     startL = encL; startR = encR;
     result = RUNNING;
+    turnAccelSet = false;
   }
 
   void startLineFollow(int base, float p, float i, float d, int md,
@@ -167,21 +179,29 @@ struct MotionSM {
 
   int tick(MotoronI2C& mc, int centroid = -1,
            float udsDistCm = -1, float udsLeftCm = -1, float udsRightCm = -1) {
-    if (type == IDLE) return DONE;
+    if (type == IDLE) {
+      if (turnAccelSet) { setAccel(mc, MOTOR_RAMP); turnAccelSet = false; }
+      return DONE;
+    }
     if (result != RUNNING) return result;
 
     // Obstacle check: only for open-loop STRAIGHT/TURN (not controlled types
     // like WALL_FOLLOW which intentionally get close to walls).
     if (type == STRAIGHT || type == TURN) {
-      if (obstacleAhead(udsDistCm)) { setMotors(mc, 0, 0); return result = BLOCKED; }
+      if (obstacleAhead(udsDistCm)) {
+        setMotors(mc, 0, 0);
+        if (type == TURN && turnAccelSet) { setAccel(mc, MOTOR_RAMP); turnAccelSet = false; }
+        return result = BLOCKED;
+      }
     }
 
     switch (type) {
 
       // ── STRAIGHT (open-loop, no PID) ───────────────────────
       case STRAIGHT: {
+        if (turnAccelSet) { setAccel(mc, MOTOR_RAMP); turnAccelSet = false; }
         if (millis() >= deadline) { setMotors(mc, 0, 0); return result = TIMEOUT; }
-        if (abs(encL - startL) >= ticks && abs(encR - startR) >= ticks)
+        if ((abs(encL - startL) + abs(encR - startR)) / 2 >= ticks)
           { setMotors(mc, 0, 0); return result = DONE; }
         setMotors(mc, speed, speed);
         return RUNNING;
@@ -189,9 +209,17 @@ struct MotionSM {
 
       // ── TURN (open-loop, no PID) ──────────────────────────
       case TURN: {
-        if (millis() >= deadline) { setMotors(mc, 0, 0); return result = TIMEOUT; }
-        if (abs(encL - startL) >= ticks && abs(encR - startR) >= ticks)
-          { setMotors(mc, 0, 0); return result = DONE; }
+        if (!turnAccelSet) { setAccel(mc, 180000); turnAccelSet = true; }
+        if (millis() >= deadline) {
+          setMotors(mc, 0, 0);
+          if (turnAccelSet) { setAccel(mc, MOTOR_RAMP); turnAccelSet = false; }
+          return result = TIMEOUT;
+        }
+        if ((abs(encL - startL) + abs(encR - startR)) / 2 >= ticks) {
+          setMotors(mc, 0, 0);
+          if (turnAccelSet) { setAccel(mc, MOTOR_RAMP); turnAccelSet = false; }
+          return result = DONE;
+        }
         setMotors(mc, dir * speed, -dir * speed);
         return RUNNING;
       }

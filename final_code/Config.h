@@ -15,7 +15,6 @@ const int PIN_ENC_LB = 5;
 const int PIN_ENC_RA = 2;   // right track encoder
 const int PIN_ENC_RB = 3;
 
-const float TICKS_PER_M = 3607.0;   // Calculated. It was 5360
 const float TRACK_BASE_MM = 152.0;  // distance between tread centres
 const int MOTOR_MIN = 300;           // below this, friction wins
 const int MOTOR_MAX = 660;           // absolute ceiling
@@ -95,26 +94,26 @@ const int MOTOR_RAMP = 800;   // Motoron max accel/decel
 
 // ── Navigation Speeds ───────────────────────────────────────
 const int MOVE_SPEED = 500;    // constant speed for straight-line moves
-const int TURN_SPEED = 550;    // constant speed for tank turns (higher to break friction)
+const int TURN_SPEED = 660;    // constant speed for tank turns
 
 // ── Motor Bias ──────────────────────────────────────────────
 // Left track is ~4.2% stronger; compensate by giving right track more power.
-const float BIAS_RIGHT = 1.042f;
+const float BIAS_RIGHT = 1.047f;
 
-// ── Tick Calibration (linear regression: ticks = m * amount + c) ─────
-// Update these after running tick_calibration and fitting a line.
-// amount is in millimetres for distance, degrees for turn.
-const float DIST_TICK_M = 0.3607f;  // ticks per mm  (baseline: TICKS_PER_M/1000)
-const float DIST_TICK_C = 0.0f;     // overshoot offset (ticks)
-const float TURN_TICK_M = 5.83f;    // ticks per degree (baseline: TICKS_PER_90/90)
-const float TURN_TICK_C = 0.0f;     // overshoot offset (ticks)
+// ── Tick Calibration ──────────────────────────────────────────
+// Fitted from tick_calibration data:
+//   distance_mm = 4.44137 * log(ticks+1) + 0.273899 * ticks
+//   turn ticks  = 6.0061 * theta_degrees
 
-// Convenience wrappers
 static inline long ticksForDistance(float mm) {
-  return (long)(DIST_TICK_M * mm + DIST_TICK_C);
+  float t = 34.21488f * expf(-0.0870233f * mm - 1.0f) + 3.60454f * mm;
+  return (long)(t > 0 ? t : 0);
 }
 static inline long ticksForTurn(float degrees) {
-  return (long)(TURN_TICK_M * degrees + TURN_TICK_C);
+  return (long)(6.0061f * degrees);
+}
+static inline float ticksToMm(long ticks) {
+  return 4.44137f * logf((float)(ticks + 1)) + 0.273899f * (float)ticks;
 }
 
 #endif

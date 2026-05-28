@@ -3,19 +3,19 @@
 //  Open-loop (demo 9 pattern).  2kHz encoder polling.
 //
 //  Commands (send via Serial Monitor, 115200 baud):
-//    d <ticks>          — go forward by <ticks> (uses MOVE_SPEED=500)
-//    a <ticks>          — tank turn by <ticks> (uses TURN_SPEED=550)
+//    d <ticks> [trials] — forward by <ticks>, repeated <trials> times (MOVE_SPEED=500)
+//    a <ticks> [trials] — tank turn by <ticks>, repeated <trials> times (TURN_SPEED=660)
 //    f <ticks> <speed>  — forward by raw ticks (custom speed)
 //    t <ticks> <speed>  — tank turn by raw ticks (custom speed)
 //    s                  — stop
 //    r                  — reset encoders
 //    diag               — encoder diagnostics (5s)
 //
-//  For each d / a command move the robot, measure the actual
-//  distance travelled in mm (or degrees turned) with a ruler,
-//  and record the (ticks_commanded, mm_travelled) pair.
-//  Fit a line (ticks = m*mm + c) and update DIST_TICK_M / _C
-//  in Config.h for distance, TURN_TICK_M / _C for turns.
+//  d / a with trials > 1 runs the move multiple times with 400ms
+//  pause between, then prints the average left/right ticks across
+//  all trials.  Measure the actual distance/angle with a ruler and
+//  record (commanded_ticks, mm_travelled) to fit DIST_TICK_M/_C
+//  and TURN_TICK_M/_C in Config.h.
 // ============================================================
 // Instructions
 // 1. measure motor bias
@@ -50,18 +50,13 @@ const int KILL_BTN = 38;
 const int ACT_LED = 39;
 
 // ── Calibration (mirrors Config.h — update after regression) ─
-const float TICKS_PER_M = 3607.0;
-const long  TICKS_PER_90 = 525;
+// const float TICKS_PER_M = 3647.0; // 3607
+// const long  TICKS_PER_90 = 525;    
 const int   MOVE_SPEED = 500;
-const int   TURN_SPEED = 550;
-const float BIAS_RIGHT = 1.0f;
+const int   TURN_SPEED = 660;
+const float BIAS_RIGHT = 1.047f; // 
 
-static inline long ticksForDistance(float mm) {
-  return (long)((TICKS_PER_M / 1000.0f) * mm);
-}
-static inline long ticksForTurn(float deg) {
-  return (long)((float)TICKS_PER_90 / 90.0f * deg);
-}
+// (convenience wrappers no longer needed — use raw ticks directly)
 
 // ── Motoron ─────────────────────────────────────────────────
 MotoronI2C mc(0x10);
@@ -116,34 +111,23 @@ bool handleEStop() {
 }
 
 // ── Blocking open-loop motion ──────────────────────────────
-void runOL(int left, int right, long targetTicks, const char* label) {
+// Returns actual absolute ticks for left and right via references.
+void runOL(int left, int right, long targetTicks, long& actualL, long& actualR) {
   encL = 0; encR = 0;
   setMotors(left, right);
 
   unsigned long lastPoll = 0;
-  unsigned long lastPrint = 0;
 
   while (true) {
     unsigned long now = micros();
     if (now - lastPoll >= 500) { lastPoll = now; pollEncoders(); }
-    if (now / 1000 - lastPrint >= 1000) {
-      lastPrint = now / 1000;
-      Serial.print(encL); Serial.print(" "); Serial.println(encR);
-    }
     handleEStop();
-    if (killed) { setMotors(0, 0); return; }
-    if (abs(encL) >= targetTicks && abs(encR) >= targetTicks) break;
+    if (killed) { setMotors(0, 0); actualL = abs(encL); actualR = abs(encR); return; }
+    if ((abs(encL) + abs(encR)) / 2 >= targetTicks) break;
   }
   setMotors(0, 0);
-
-  long actualL = abs(encL);
-  long actualR = abs(encR);
-  long actual  = max(actualL, actualR);
-  Serial.print(label);
-  Serial.print("  L:"); Serial.print(actualL);
-  Serial.print("  R:"); Serial.print(actualR);
-  Serial.print("  target="); Serial.println(targetTicks);
-  Serial.print("RECORD: "); Serial.print(actual); Serial.println(" ticks");
+  actualL = abs(encL);
+  actualR = abs(encR);
 }
 
 // ── Setup ───────────────────────────────────────────────────
@@ -151,17 +135,15 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n=== Tick Calibration (open-loop, 2kHz polling) ===");
-  Serial.println("  d <ticks>          forward by <ticks> (MOVE_SPEED=500)");
-  Serial.println("  a <ticks>          tank turn by <ticks> (TURN_SPEED=550)");
-  Serial.println("  f <ticks> <speed>  forward raw ticks (custom speed)");
-  Serial.println("  t <ticks> <speed>  turn raw ticks (custom speed)");
-  Serial.println("  s                  stop");
-  Serial.println("  r                  reset encoders");
-  Serial.println("  diag               encoder diagnostics");
+  Serial.println("  d <ticks> [trials]  forward by <ticks>, <trials> times");
+  Serial.println("  a <ticks> [trials]  tank turn by <ticks>, <trials> times");
+  Serial.println("  f <ticks> <speed>   forward raw ticks (custom speed)");
+  Serial.println("  t <ticks> <speed>   turn raw ticks (custom speed)");
+  Serial.println("  s                   stop");
+  Serial.println("  r                   reset encoders");
+  Serial.println("  diag                encoder diagnostics");
   Serial.println();
-  Serial.println("For each d/a command, measure actual mm/deg travelled.");
-  Serial.println("Fit: ticks = m * mm + c  →  update DIST_TICK_M/_C");
-  Serial.println("     ticks = m * deg + c →  update TURN_TICK_M/_C");
+  Serial.println("d/a with trials>1 repeats with 400ms pause and averages L/R ticks.");
 
   pinMode(ENC_LA, INPUT_PULLUP);
   pinMode(ENC_LB, INPUT_PULLUP);
@@ -216,19 +198,64 @@ void loop() {
   if (cmd == 's') { setMotors(0, 0); Serial.println("STOP"); }
   else if (cmd == 'r') { encL = 0; encR = 0; Serial.println("encoders reset"); }
 
-  else if (cmd == 'd' && val > 0) {
-    long t = (long)val;
-    char buf[64]; snprintf(buf, sizeof(buf), "forward %ld ticks @ %d", t, MOVE_SPEED);
-    Serial.print("cmd_ticks="); Serial.println(t);
-    runOL(MOVE_SPEED, MOVE_SPEED, t, buf);
-    Serial.println("DONE — measure how many mm the robot moved");
+  else if (cmd == 'd') {
+    long ticks; int trials;
+    char buf[32]; arg.toCharArray(buf, sizeof(buf));
+    int n = sscanf(buf, "%ld %d", &ticks, &trials);
+    if (n < 1 || ticks <= 0) { Serial.println("? use: d <ticks> [trials]"); return; }
+    if (n < 2) trials = 1;
+    else trials = max(1, trials);
+    Serial.print("Forward "); Serial.print(ticks); Serial.print(" ticks x "); Serial.print(trials); Serial.println(" trials");
+
+    long sumL = 0, sumR = 0;
+    for (int t = 0; t < trials; t++) {
+      long aL, aR;
+      runOL(MOVE_SPEED, MOVE_SPEED, ticks, aL, aR);
+      sumL += aL; sumR += aR;
+      Serial.print("  trial "); Serial.print(t + 1);
+      Serial.print(": L="); Serial.print(aL); Serial.print(" R="); Serial.println(aR);
+      if (t < trials - 1) delay(400);
+    }
+    float avgL = (float)sumL / trials;
+    float avgR = (float)sumR / trials;
+    float avg  = (avgL + avgR) / 2.0f;
+    Serial.print("RESULT: avgL="); Serial.print(avgL, 1);
+    Serial.print("  avgR="); Serial.print(avgR, 1);
+    Serial.print("  avg="); Serial.println(avg, 1);
   }
-  else if (cmd == 'a' && val > 0) {
-    long t = (long)val;
-    char buf[64]; snprintf(buf, sizeof(buf), "turn %ld ticks @ %d", t, TURN_SPEED);
-    Serial.print("cmd_ticks="); Serial.println(t);
-    runOL(-TURN_SPEED, TURN_SPEED, t, buf);
-    Serial.println("DONE — measure how many degrees the robot turned");
+  else if (cmd == 'a') {
+    mc.setMaxAcceleration(1, 180000);
+    mc.setMaxDeceleration(1, 180000);
+    mc.setMaxAcceleration(2, 180000);
+    mc.setMaxDeceleration(2, 180000);
+    long ticks; int trials;
+    char buf[32]; arg.toCharArray(buf, sizeof(buf));
+    int n = sscanf(buf, "%ld %d", &ticks, &trials);
+    if (n < 1 || ticks <= 0) { Serial.println("? use: a <ticks> [trials]"); return; }
+    if (n < 2) trials = 1;
+    else trials = max(1, trials);
+    Serial.print("Turn "); Serial.print(ticks); Serial.print(" ticks x "); Serial.print(trials); Serial.println(" trials");
+
+    long sumL = 0, sumR = 0;
+    for (int t = 0; t < trials; t++) {
+      long aL, aR;
+      runOL(-TURN_SPEED, TURN_SPEED, ticks, aL, aR);
+      sumL += aL; sumR += aR;
+      Serial.print("  trial "); Serial.print(t + 1);
+      Serial.print(": L="); Serial.print(aL); Serial.print(" R="); Serial.println(aR);
+      if (t < trials - 1) delay(400);
+    }
+    float avgL = (float)sumL / trials;
+    float avgR = (float)sumR / trials;
+    float avg  = (avgL + avgR) / 2.0f;
+    Serial.print("RESULT: avgL="); Serial.print(avgL, 1);
+    Serial.print("  avgR="); Serial.print(avgR, 1);
+    Serial.print("  avg="); Serial.println(avg, 1);
+
+    mc.setMaxAcceleration(1, 800);
+    mc.setMaxDeceleration(1, 800);
+    mc.setMaxAcceleration(2, 800);
+    mc.setMaxDeceleration(2, 800);
   }
 
   else if (cmd == 'f') {
@@ -236,18 +263,20 @@ void loop() {
     int speed = MOVE_SPEED;
     int secondSpace = arg.indexOf(' ');
     if (secondSpace > 0) { speed = constrain((int)arg.substring(secondSpace + 1).toFloat(), 0, 660); ticks = (long)arg.substring(0, secondSpace).toFloat(); }
-    char buf[64]; snprintf(buf, sizeof(buf), "forward %ld @ %d", ticks, speed);
-    runOL(speed, speed, ticks, buf);
-    Serial.println("DONE");
+    long aL, aR;
+    runOL(speed, speed, ticks, aL, aR);
+    Serial.print("L:"); Serial.print(aL); Serial.print("  R:"); Serial.print(aR);
+    Serial.print("  target="); Serial.println(ticks);
   }
   else if (cmd == 't') {
     long ticks = (long)val;
     int speed = TURN_SPEED;
     int secondSpace = arg.indexOf(' ');
     if (secondSpace > 0) { speed = constrain((int)arg.substring(secondSpace + 1).toFloat(), 0, 660); ticks = (long)arg.substring(0, secondSpace).toFloat(); }
-    char buf[64]; snprintf(buf, sizeof(buf), "turn %ld @ %d", ticks, speed);
-    runOL(-speed, speed, ticks, buf);
-    Serial.println("DONE");
+    long aL, aR;
+    runOL(-speed, speed, ticks, aL, aR);
+    Serial.print("L:"); Serial.print(aL); Serial.print("  R:"); Serial.print(aR);
+    Serial.print("  target="); Serial.println(ticks);
   }
   else if (line == "diag") {
     Serial.println("Encoder diagnostics (5s, spin each wheel manually):");
@@ -260,6 +289,6 @@ void loop() {
     }
   }
   else {
-    Serial.println("?  use: d <ticks> | a <ticks> | f <ticks> <speed> | t <ticks> <speed> | s | r | diag");
+    Serial.println("?  use: d <ticks> [trials] | a <ticks> [trials] | f <ticks> <speed> | t <ticks> <speed> | s | r | diag");
   }
 }
