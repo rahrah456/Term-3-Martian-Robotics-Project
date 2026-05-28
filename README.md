@@ -4,7 +4,7 @@
 
 ##### Jonah Wilson-Troy, Wyatt Ip, Ibrahim Syawwal Sofian, Rahul Ranjan
 
-An autonomous robot that navigates a 2.5 m x 2.5 m Martian-themed arena, plants seeds in marked holes, and returns to base - all autonomously and in collaboration with 13 other ~~obstacles~~ rovers.
+An autonomous robot that navigates a 2.5 m x 2.5 m (actually 2.4 m x 2.4 m...) Martian-themed arena, plants seeds in marked holes, and returns to base - all autonomously and in collaboration with 13 other ~~obstacles~~ rovers.
 
 ---
 
