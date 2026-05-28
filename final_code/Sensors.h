@@ -84,7 +84,7 @@ void readIR(uint16_t vals[]) {
 int irCentroid(const uint16_t vals[]) {
   uint32_t sum = 0, weighted = 0;
   for (uint8_t i = 0; i < IR_COUNT; i++) {
-    uint16_t v = 1000 - vals[i];
+    uint16_t v = vals[i];
     if (v > 50) {
       sum += v;
       weighted += v * i * 1000;

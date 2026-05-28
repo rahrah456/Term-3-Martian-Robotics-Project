@@ -3,19 +3,42 @@
 //  Open-loop (demo 9 pattern).  2kHz encoder polling.
 //
 //  Commands (send via Serial Monitor, 115200 baud):
-//    d <mm>             — go forward <mm> (uses MOVE_SPEED=500)
-//    a <degrees>        — tank turn <degrees> (uses TURN_SPEED=550)
-//    f <ticks> <speed>  — forward by raw ticks (for verification)
-//    t <ticks> <speed>  — tank turn by raw ticks
+//    d <ticks>          — go forward by <ticks> (uses MOVE_SPEED=500)
+//    a <ticks>          — tank turn by <ticks> (uses TURN_SPEED=550)
+//    f <ticks> <speed>  — forward by raw ticks (custom speed)
+//    t <ticks> <speed>  — tank turn by raw ticks (custom speed)
 //    s                  — stop
 //    r                  — reset encoders
 //    diag               — encoder diagnostics (5s)
 //
-//  After each d / a command the sketch prints the actual ticks
-//  travelled.  Record (input, actualTicks) pairs in a
-//  spreadsheet, fit a line, and update DIST_TICK_M / _C in
-//  Config.h (for distance, mm) and TURN_TICK_M / _C (for turn, deg).
+//  For each d / a command move the robot, measure the actual
+//  distance travelled in mm (or degrees turned) with a ruler,
+//  and record the (ticks_commanded, mm_travelled) pair.
+//  Fit a line (ticks = m*mm + c) and update DIST_TICK_M / _C
+//  in Config.h for distance, TURN_TICK_M / _C for turns.
 // ============================================================
+// Instructions
+// 1. measure motor bias
+//   1.1 make it go 2 metres (should be ~2000 ticks) in a straight line
+//   1.2 use the ratio of tick outputs to update BIAS_RIGHT. BIAS_RIGHT = left ticks / right ticks
+//   1.3 repeat striahgt line to confirm straight
+
+// 2. ticks per metre calibration
+//   2.1 make it go 2 metres (should be ~2000 ticks) in a straight line
+//   2.2 measure distance
+//   2.3 use this to update TICKS_PER_M
+
+// 3. gather many data points
+//   3.1 for both turning (a) and moving (d)
+//   3.2 reset tick counters using r command
+//   3.3 give different move commands and measure the input and output in a table (e.g. d 200 then record 200 and the outputted ticks)
+//   3.4 focus your data points around small moves but include larger moves as well
+//   3.5 preferably test on arena, but floor is fine
+
+
+
+// ============================================================
+
 
 #include <Arduino.h>
 #include <Motoron.h>
@@ -31,7 +54,7 @@ const float TICKS_PER_M = 3607.0;
 const long  TICKS_PER_90 = 525;
 const int   MOVE_SPEED = 500;
 const int   TURN_SPEED = 550;
-const float BIAS_RIGHT = 1.042f;
+const float BIAS_RIGHT = 1.0f;
 
 static inline long ticksForDistance(float mm) {
   return (long)((TICKS_PER_M / 1000.0f) * mm);
@@ -128,17 +151,17 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n=== Tick Calibration (open-loop, 2kHz polling) ===");
-  Serial.println("  d <mm>             forward <mm>  (MOVE_SPEED=500)");
-  Serial.println("  a <degrees>        tank turn     (TURN_SPEED=550)");
-  Serial.println("  f <ticks> <speed>  forward raw ticks");
-  Serial.println("  t <ticks> <speed>  turn raw ticks");
+  Serial.println("  d <ticks>          forward by <ticks> (MOVE_SPEED=500)");
+  Serial.println("  a <ticks>          tank turn by <ticks> (TURN_SPEED=550)");
+  Serial.println("  f <ticks> <speed>  forward raw ticks (custom speed)");
+  Serial.println("  t <ticks> <speed>  turn raw ticks (custom speed)");
   Serial.println("  s                  stop");
   Serial.println("  r                  reset encoders");
   Serial.println("  diag               encoder diagnostics");
   Serial.println();
-  Serial.println("Record the 'RECORD: <ticks>' values and fit a line:");
-  Serial.println("  distance: ticks = m * mm + c  →  update DIST_TICK_M/_C");
-  Serial.println("  turn:     ticks = m * deg + c →  update TURN_TICK_M/_C");
+  Serial.println("For each d/a command, measure actual mm/deg travelled.");
+  Serial.println("Fit: ticks = m * mm + c  →  update DIST_TICK_M/_C");
+  Serial.println("     ticks = m * deg + c →  update TURN_TICK_M/_C");
 
   pinMode(ENC_LA, INPUT_PULLUP);
   pinMode(ENC_LB, INPUT_PULLUP);
@@ -194,18 +217,18 @@ void loop() {
   else if (cmd == 'r') { encL = 0; encR = 0; Serial.println("encoders reset"); }
 
   else if (cmd == 'd' && val > 0) {
-    long t = ticksForDistance(val);
-    char buf[64]; snprintf(buf, sizeof(buf), "forward %.0fmm", val);
-    Serial.print("target="); Serial.print(val); Serial.print("mm  cmd_ticks="); Serial.println(t);
+    long t = (long)val;
+    char buf[64]; snprintf(buf, sizeof(buf), "forward %ld ticks @ %d", t, MOVE_SPEED);
+    Serial.print("cmd_ticks="); Serial.println(t);
     runOL(MOVE_SPEED, MOVE_SPEED, t, buf);
-    Serial.println("DONE");
+    Serial.println("DONE — measure how many mm the robot moved");
   }
   else if (cmd == 'a' && val > 0) {
-    long t = ticksForTurn(val);
-    char buf[64]; snprintf(buf, sizeof(buf), "turn %.0fdeg", val);
-    Serial.print("target="); Serial.print(val); Serial.print("deg  cmd_ticks="); Serial.println(t);
+    long t = (long)val;
+    char buf[64]; snprintf(buf, sizeof(buf), "turn %ld ticks @ %d", t, TURN_SPEED);
+    Serial.print("cmd_ticks="); Serial.println(t);
     runOL(-TURN_SPEED, TURN_SPEED, t, buf);
-    Serial.println("DONE");
+    Serial.println("DONE — measure how many degrees the robot turned");
   }
 
   else if (cmd == 'f') {
@@ -237,6 +260,6 @@ void loop() {
     }
   }
   else {
-    Serial.println("?  use: d <cm> | a <deg> | f <ticks> <speed> | t <ticks> <speed> | s | r | diag");
+    Serial.println("?  use: d <ticks> | a <ticks> | f <ticks> <speed> | t <ticks> <speed> | s | r | diag");
   }
 }

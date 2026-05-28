@@ -292,7 +292,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
   <!-- IR Sensors -->
   <div class="card">
     <h2>IR Array</h2>
-    <div class="ir-bar" id="irBar"></div>
+    <div class="ir-wrapper" style="position:relative;">
+      <div class="ir-bar" id="irBar"></div>
+    </div>
     <div style="font-size:12px;color:var(--muted);">centroid: <span id="irLabel">--</span></div>
   </div>
 
@@ -404,17 +406,45 @@ function update(d) {
 
   // IR bar
   const bar = document.getElementById('irBar');
+  const wrapper = bar.parentElement;
   bar.innerHTML = '';
   const vals = d.ir || [];
+  let maxV = -1, maxI = -1;
   for (let i = 0; i < 9; i++) {
-    const seg = document.createElement('div');
-    seg.className = 'ir-seg' + (d.centroid >= 0 && Math.abs(i*1000 - d.centroid) < 500 ? ' active' : '');
     let v = vals[i] || 0;
+    if (v > maxV) { maxV = v; maxI = i; }
+    const seg = document.createElement('div');
+    seg.className = 'ir-seg';
     seg.style.height = Math.max(4, (v / 1000) * 100) + '%';
     seg.title = 'S' + i + ': ' + v;
     bar.appendChild(seg);
   }
-  document.getElementById('irLabel').textContent = d.centroid;
+  // Highlight the strongest sensor, or centroid-nearest if centroid is valid
+  let activeIdx = maxI;
+  if (d.centroid >= 0) {
+    activeIdx = Math.round(d.centroid / 1000);
+    if (activeIdx < 0) activeIdx = 0;
+    if (activeIdx > 8) activeIdx = 8;
+  }
+  if (activeIdx >= 0) {
+    bar.children[activeIdx].classList.add('active');
+  }
+  // Centroid caret (▼) at the interpolated position inside the wrapper
+  let caret = document.getElementById('irCaret');
+  if (!caret) {
+    caret = document.createElement('div');
+    caret.id = 'irCaret';
+    caret.style.cssText = 'position:absolute;top:-16px;left:0;font-size:14px;line-height:1;pointer-events:none;';
+    wrapper.appendChild(caret);
+  }
+  if (d.centroid >= 0) {
+    const pct = (d.centroid / 8000) * 100;
+    caret.textContent = '\u25bc';
+    caret.style.left = pct + '%';
+  } else {
+    caret.textContent = '';
+  }
+  document.getElementById('irLabel').textContent = d.centroid >= 0 ? d.centroid : '--';
 
   // Hole grid
   const hg = document.getElementById('holeGrid');
