@@ -51,7 +51,7 @@ pip install paho-mqtt
 python dashboard.py
 ```
 
-Open the URL printed in the terminal (default `http://localhost:8080`). The dashboard shows a map view, sensor readings, PID tuning sliders, and test command buttons.
+Open the URL printed in the terminal (default `http://localhost:8081`). The dashboard shows a map view, sensor readings, PID tuning sliders, and test command buttons.
 
 ---
 

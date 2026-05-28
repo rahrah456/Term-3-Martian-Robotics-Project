@@ -4,8 +4,9 @@ dashboard.py  —  MQTT subscriber + HTTP server for robot dashboard
 Listens to robot data via MQTT and serves a live HTML page.
 
 Usage:
+    pip install paho-mqtt (install the Paho MQTT client library)
     python3 dashboard.py
-    Then open http://localhost:8080 in your browser.
+    Then open http://localhost:8081 in your browser.
 """
 
 import json
