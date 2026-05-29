@@ -317,8 +317,7 @@ struct MotionSM {
 };
 
 // ── Seed Tracking ───────────────────────────────────────────
-extern int   g_seedIdx;          // current servo index (0=locked, 1-5=seeds)
-extern bool  g_seedsLoaded[5];   // which seeds remain
+extern int g_seedIdx;   // current servo index (0=locked, 1-5 dispensed next)
 
 // ── Seed Dispensing ─────────────────────────────────────────
 void lockSeeds(Servo& servo) {
@@ -338,7 +337,6 @@ void dispenseNextSeed(Servo& servo) {
   if (g_seedIdx < 1 || g_seedIdx >= SEED_COUNT) return;
   servo.write(SEED_ANGLES[g_seedIdx]);
   delay(500);
-  g_seedsLoaded[g_seedIdx - 1] = false;
   g_seedIdx++;
   if (g_seedIdx >= SEED_COUNT) g_seedIdx = SEED_COUNT - 1;
 }

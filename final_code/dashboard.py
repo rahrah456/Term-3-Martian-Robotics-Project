@@ -35,8 +35,7 @@ robot_state = {
     "heading": 0.0,
     "holes": {},
     "log": [],
-    "seedIdx": 0,
-    "seedsLoaded": [True, True, True, True, True]
+    "seedIdx": 1
 }
 
 sse_clients = []      # list of queue.Queue for SSE push
@@ -73,12 +72,14 @@ def on_message(client, userdata, msg):
             if len(parts) >= 16:
                 robot_state["seedIdx"] = int(parts[15])
 
-    elif payload.startswith("SEED_LOADED:"):
-        parts = payload[12:].split(",")
-        if len(parts) >= 5:
-            robot_state["seedsLoaded"] = [p == "1" for p in parts[:5]]
-
     elif payload.startswith("HOLE:"):
+        parts = payload[5:].split(",")
+        if len(parts) >= 4:
+            key = f"{parts[0]},{parts[1]}"
+            robot_state["holes"][key] = {
+                "planted": parts[2] == "1",
+                "fertile": parts[3] == "1"
+            }
 
     elif payload.startswith("LOG:"):
         msg_text = payload[4:]
@@ -613,14 +614,14 @@ function update(d) {
   sCtx.arc(cxS, cyS, outerR - 4, gapStart, gapStart + 100 * Math.PI / 180);
   sCtx.stroke();
 
-  const loaded = d.seedsLoaded || [true, true, true, true, true];
   for (let i = 0; i < 5; i++) {
     const a = seedAngles[i] * Math.PI / 180 + rotS;
     const sx = cxS + outerR * Math.sin(a);
     const sy = cyS - outerR * Math.cos(a);
+    const filled = (i + 1 >= curSeed);   // last n spots are loaded
     sCtx.beginPath();
     sCtx.arc(sx, sy, innerR, 0, Math.PI * 2);
-    if (loaded[i]) {
+    if (filled) {
       sCtx.fillStyle = (i + 1 === curSeed) ? '#246b9f' : '#317456';
       sCtx.fill();
     }

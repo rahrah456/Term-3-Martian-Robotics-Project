@@ -16,8 +16,7 @@
 
 class MQTTManager;
 
-extern int  g_seedIdx;
-extern bool g_seedsLoaded[5];
+extern int g_seedIdx;
 
 static MQTTManager* g_mqtt = nullptr;
 
@@ -199,14 +198,6 @@ public:
              irVals[0], irVals[1], irVals[2], irVals[3], irVals[4],
              irVals[5], irVals[6], irVals[7], irVals[8],
              udsL, udsM, udsR, heading, lightVal, g_seedIdx);
-    messenger.sendToBoard(DASHBOARD_ID, buf);
-  }
-
-  void sendSeedState() {
-    char buf[48];
-    snprintf(buf, sizeof(buf), "SEED_LOADED:%d,%d,%d,%d,%d",
-             g_seedsLoaded[0], g_seedsLoaded[1], g_seedsLoaded[2],
-             g_seedsLoaded[3], g_seedsLoaded[4]);
     messenger.sendToBoard(DASHBOARD_ID, buf);
   }
 

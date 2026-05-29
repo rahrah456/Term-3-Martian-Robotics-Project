@@ -144,8 +144,7 @@ int lightVal;
 char rfidBuf[32];
 bool rfidSeen = false;
 int8_t lastHoleReplyRow = -1, lastHoleReplyCol = -1;
-int  g_seedIdx = 1;              // current servo index
-bool g_seedsLoaded[5] = {true, true, true, true, true};
+int  g_seedIdx = 1;   // current servo index, 1 by default (all 5 seeds loaded)
 bool airlockAccepted = false;
 
 // ============================================================
@@ -917,7 +916,6 @@ void loop() {
     }
     mqtt.sendSensorSnapshot(irVals, irCentroidVal, (long)filteredUdsL, (long)filteredUdsM, (long)filteredUdsR,
                             imuData.headingDeg, lightVal);
-    mqtt.sendSeedState();
   }
 
   // ── When killed: stop actuators only, sensors still stream ──
