@@ -144,6 +144,8 @@ int lightVal;
 char rfidBuf[32];
 bool rfidSeen = false;
 int8_t lastHoleReplyRow = -1, lastHoleReplyCol = -1;
+int  g_seedIdx = 1;              // current servo index
+bool g_seedsLoaded[5] = {true, true, true, true, true};
 bool airlockAccepted = false;
 
 // ============================================================
@@ -198,6 +200,12 @@ void onMqttHeadingReset() {
 void onMqttAirlockReply(bool accepted) {
   airlockAccepted = accepted;
   mqtt.sendLog(accepted ? "airlock accepted" : "airlock denied");
+}
+
+void onMqttSeedSelect(int idx) {
+  if (idx < 0 || idx >= SEED_COUNT) return;
+  dispenseSeed(servo, idx);
+  mqtt.sendLog("seed pos set");
 }
 
 // ── Test mode: local blocking loop with full sensor reads ───
@@ -534,7 +542,7 @@ void runDeposit() {
 
   // ── 6. Dispense seed ───────────────────────────────────────
   mqtt.sendLog("deposit: dispensing");
-  dispenseSeed(servo, 1);
+  dispenseNextSeed(servo);
   delay(300);
 
   // ── 7. Wiggle to clear chute ──────────────────────────────
@@ -765,6 +773,7 @@ void setup() {
   mqtt.onRevive       = onMqttRevive;
   mqtt.onTestCommand   = onMqttTestCommand;
   mqtt.onAirlockReply = onMqttAirlockReply;
+  mqtt.onSeedSelect   = onMqttSeedSelect;
   Serial.print("MQTT: connecting");
   mqtt.begin();
   for (int i = 0; i < 50 && !mqtt.isConnected(); i++) {
@@ -908,6 +917,7 @@ void loop() {
     }
     mqtt.sendSensorSnapshot(irVals, irCentroidVal, (long)filteredUdsL, (long)filteredUdsM, (long)filteredUdsR,
                             imuData.headingDeg, lightVal);
+    mqtt.sendSeedState();
   }
 
   // ── When killed: stop actuators only, sensors still stream ──

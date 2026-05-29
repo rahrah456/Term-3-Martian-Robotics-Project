@@ -34,7 +34,9 @@ robot_state = {
     "uds": [0, 0, 0],
     "heading": 0.0,
     "holes": {},
-    "log": []
+    "log": [],
+    "seedIdx": 0,
+    "seedsLoaded": [True, True, True, True, True]
 }
 
 sse_clients = []      # list of queue.Queue for SSE push
@@ -68,15 +70,15 @@ def on_message(client, userdata, msg):
                 robot_state["ir"][i] = int(parts[1 + i])
             robot_state["uds"] = [int(parts[10]), int(parts[11]), int(parts[12])]
             robot_state["heading"] = float(parts[13])
+            if len(parts) >= 16:
+                robot_state["seedIdx"] = int(parts[15])
+
+    elif payload.startswith("SEED_LOADED:"):
+        parts = payload[12:].split(",")
+        if len(parts) >= 5:
+            robot_state["seedsLoaded"] = [p == "1" for p in parts[:5]]
 
     elif payload.startswith("HOLE:"):
-        parts = payload[5:].split(",")
-        if len(parts) >= 4:
-            key = f"{parts[0]},{parts[1]}"
-            robot_state["holes"][key] = {
-                "planted": parts[2] == "1",
-                "fertile": parts[3] == "1"
-            }
 
     elif payload.startswith("LOG:"):
         msg_text = payload[4:]
@@ -300,6 +302,16 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <div style="font-size:12px;color:var(--muted);">centroid: <span id="irLabel">--</span></div>
   </div>
 
+  <!-- Seed Loader -->
+  <div class="card">
+    <h2>Seed Loader</h2>
+    <div style="text-align:center;">
+      <canvas id="seedCanvas" width="160" height="160"
+              style="width:160px;height:160px;cursor:pointer;"
+              onclick="clickSeed(event)"></canvas>
+    </div>
+  </div>
+
   <!-- Hole Status -->
   <div class="card">
     <h2>Holes (9&times;9)</h2>
@@ -346,6 +358,25 @@ HTML_PAGE = r"""<!DOCTYPE html>
 </div>
 
 <script>
+function clickSeed(event) {
+  const canvas = document.getElementById('seedCanvas');
+  const rect = canvas.getBoundingClientRect();
+  const scale = canvas.width / rect.width;
+  const mx = (event.clientX - rect.left) * scale;
+  const my = (event.clientY - rect.top) * scale;
+  const cx = 80, cy = 80, outerR = 55, innerR = 14;
+  const seedAngles = [0, 100, 165, 230, 295];
+  const curI = (lastState && lastState.seedIdx > 0) ? lastState.seedIdx : 1;
+  const rot = -(seedAngles[curI - 1] || 0) * Math.PI / 180;
+  for (let i = 0; i < 5; i++) {
+    const a = seedAngles[i] * Math.PI / 180 + rot;
+    const sx = cx + outerR * Math.sin(a);
+    const sy = cy - outerR * Math.cos(a);
+    const d = Math.hypot(mx - sx, my - sy);
+    if (d < innerR) { sendCmd('SEED:' + (i + 1)); break; }
+  }
+}
+
 function getPidStr() {
   return document.getElementById('kp').value + ',' +
          document.getElementById('ki').value + ',' +
@@ -554,6 +585,48 @@ function update(d) {
     ctx.beginPath();
     ctx.arc(ux, uy, 2, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // ── Seed loader ──────────────────────────────────────────────
+  const sCanvas = document.getElementById('seedCanvas');
+  const sCtx = sCanvas.getContext('2d');
+  const sW = sCanvas.width, sH = sCanvas.height;
+  sCtx.clearRect(0, 0, sW, sH);
+  const cxS = sW / 2, cyS = sH / 2;
+  const outerR = 55, innerR = 14;
+  const seedAngles = [0, 100, 165, 230, 295];
+  const curSeed = (d.seedIdx > 0) ? d.seedIdx : 1;
+  const rotS = -(seedAngles[curSeed - 1] || 0) * Math.PI / 180;
+
+  // Outer ring
+  sCtx.strokeStyle = '#172026';
+  sCtx.lineWidth = 2;
+  sCtx.beginPath();
+  sCtx.arc(cxS, cyS, outerR, 0, Math.PI * 2);
+  sCtx.stroke();
+
+  // 100° gap marker (between seed 1 and 2)
+  const gapStart = seedAngles[0] * Math.PI / 180 + rotS;
+  sCtx.strokeStyle = '#d7dde2';
+  sCtx.lineWidth = 3;
+  sCtx.beginPath();
+  sCtx.arc(cxS, cyS, outerR - 4, gapStart, gapStart + 100 * Math.PI / 180);
+  sCtx.stroke();
+
+  const loaded = d.seedsLoaded || [true, true, true, true, true];
+  for (let i = 0; i < 5; i++) {
+    const a = seedAngles[i] * Math.PI / 180 + rotS;
+    const sx = cxS + outerR * Math.sin(a);
+    const sy = cyS - outerR * Math.cos(a);
+    sCtx.beginPath();
+    sCtx.arc(sx, sy, innerR, 0, Math.PI * 2);
+    if (loaded[i]) {
+      sCtx.fillStyle = (i + 1 === curSeed) ? '#246b9f' : '#317456';
+      sCtx.fill();
+    }
+    sCtx.strokeStyle = (i + 1 === curSeed) ? '#172026' : '#63707a';
+    sCtx.lineWidth = (i + 1 === curSeed) ? 2 : 1;
+    sCtx.stroke();
   }
 
   // Log
