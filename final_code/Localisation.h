@@ -28,7 +28,14 @@ public:
   Pose pose;
   bool valid;
 
-  Localisation() : valid(false) {
+  // Heading filter state (persistent across update() calls)
+  float gyroHeading;
+  float sinH, cosH;
+  bool  gyroInitialised;
+  float magOffset;        // subtracted from imuHeading so resetHeading sticks
+
+  Localisation() : valid(false), gyroHeading(0), sinH(0), cosH(0),
+                   gyroInitialised(false), magOffset(0) {
     pose.x = 0; pose.y = 0; pose.headingDeg = 0;
   }
 
@@ -37,6 +44,20 @@ public:
     pose.y = y;
     pose.headingDeg = headingDeg;
     valid = true;
+  }
+
+  // Reset heading: offsets the raw magnetometer reading so the effective heading
+  // becomes headingDeg and stays there (mag won't pull it back).
+  void resetHeading(float headingDeg, float currentImuHeading) {
+    magOffset = currentImuHeading - headingDeg;
+    if (magOffset > 180.0f) magOffset -= 360.0f;
+    if (magOffset < -180.0f) magOffset += 360.0f;
+    pose.headingDeg = headingDeg;
+    gyroHeading = headingDeg;
+    float hRad = headingDeg * DEG_TO_RAD;
+    sinH = sinf(hRad);
+    cosH = cosf(hRad);
+    gyroInitialised = true;
   }
 
   // ── Dead-reckoning update ─────────────────────────────────
@@ -64,14 +85,17 @@ public:
 
     float rad = pose.headingDeg * DEG_TO_RAD;
 
+    // Apply user-set mag offset so resetHeading() sticks
+    float effectiveMagHeading = imuHeading - magOffset;
+    if (effectiveMagHeading < 0.0f) effectiveMagHeading += 360.0f;
+    if (effectiveMagHeading >= 360.0f) effectiveMagHeading -= 360.0f;
+
     // ── Heading: gyro-assisted complementary filter ─────────
     // Use sin/cos vector averaging to avoid 0/360 wrapping in EMA.
-    static float gyroHeading = 0;
-    static float sinH = 0, cosH = 0;
-    static bool  gyroInitialised = false;
+    // State is in member variables (persistent).
     if (!gyroInitialised) {
-      gyroHeading = imuHeading;
-      float hRad = imuHeading * DEG_TO_RAD;
+      gyroHeading = effectiveMagHeading;
+      float hRad = effectiveMagHeading * DEG_TO_RAD;
       sinH = sinf(hRad);
       cosH = cosf(hRad);
       gyroInitialised = true;
@@ -80,16 +104,16 @@ public:
     if (motorsActive) {
       // Motors distort mag field — integrate gyro, slow mag correction
       gyroHeading += gyroZ * dt;
-      float diff = imuHeading - gyroHeading;
+      float diff = effectiveMagHeading - gyroHeading;
       if (diff > 180.0f) diff -= 360.0f;
       if (diff < -180.0f) diff += 360.0f;
-      gyroHeading += diff * 0.02f;  // ~1s correction (wrapping-safe)
+      gyroHeading += diff * 0.2f;   // ~0.1s correction (wrapping-safe)
 
       pose.headingDeg = gyroHeading;
     } else {
       // No motor interference — sin/cos vector EMA on mag heading
-      const float hAlpha = 0.04f;  // ~0.5s EMA at 50Hz
-      float hRad = imuHeading * DEG_TO_RAD;
+      const float hAlpha = 0.2f;   // ~0.1s EMA at 50Hz
+      float hRad = effectiveMagHeading * DEG_TO_RAD;
       sinH += (sinf(hRad) - sinH) * hAlpha;
       cosH += (cosf(hRad) - cosH) * hAlpha;
       pose.headingDeg = atan2f(sinH, cosH) * RAD_TO_DEG;

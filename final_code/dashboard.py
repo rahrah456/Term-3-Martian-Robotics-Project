@@ -21,7 +21,7 @@ import paho.mqtt.client as mqtt
 MQTT_HOST = "192.168.0.74"
 MQTT_PORT = 1883
 GROUP_ID = "3"
-ROBOT_ID = "Terminator"       # Must match BoardId in final_code.ino
+ROBOT_ID = "Haunter"
 DASHBOARD_ID = "dash3"          # Must match DASHBOARD_ID in secrets.h
 HTTP_PORT = 8081
 
@@ -279,6 +279,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <div class="ctrl-row">
       <button class="btn btn-primary" onclick="sendCmd('ENABLE')">ENABLE</button>
       <button class="btn btn-secondary" onclick="sendCmd('DISABLE')">DISABLE</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('HEADING:0')" style="margin-top:4px;">Reset Heading</button>
     </div>
   </div>
 
@@ -316,7 +317,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     </div>
     <div class="cheatsheet" id="cheat">
       <b>Console commands:</b><br>
-      ENABLE &nbsp; DISABLE &nbsp; DEPOSIT<br>
+      ENABLE &nbsp; DISABLE &nbsp; DEPOSIT &nbsp; EXIT_BASE<br>
       TEST:FOLLOW_LINE:&lt;base&gt;,&lt;kp&gt;,&lt;ki&gt;,&lt;kd&gt;,&lt;md&gt;<br>
       TEST:FOLLOW_WALL:&lt;base&gt;,&lt;side&gt;,&lt;targetCm&gt;,&lt;kp&gt;,&lt;ki&gt;,&lt;kd&gt;,&lt;md&gt;<br>
       &lt;key&gt;:&lt;val&gt; &nbsp; (kp, ki, kd, md)
@@ -332,6 +333,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:FOLLOW_LINE:500,'+getPidStr())">Follow Line</button>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:FOLLOW_WALL:500,1,8.0,'+getWallPidStr())">Follow Wall (R, 8cm)</button>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:DEPOSIT')">Deposit</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:EXIT_BASE')">Exit Base</button>
     </div>
   </div>
 
@@ -480,54 +482,77 @@ function update(d) {
   ctx.fillStyle = '#fbfcfd';
   ctx.fillRect(0, 0, w, h);
 
-  // Draw robot
-  const cx = w * 0.5 + d.pose.x * 0.05;
-  const cy = h * 0.5 - d.pose.y * 0.05;
+  // Map scale: 0.15 px per mm
+  const S = 0.15;
+  const cx = w * 0.5 + d.pose.x * S;
+  const cy = h * 0.5 - d.pose.y * S;
   const headRad = d.pose.heading * Math.PI / 180;
+
+  // ── Hole grid (250mm spacing) ──────────────────────────────
+  const holeSpacing = 250 * S;
+  ctx.strokeStyle = '#e8ecf0';
+  ctx.lineWidth = 0.5;
+  for (let r = 0; r < 9; r++) {
+    for (let c = 0; c < 9; c++) {
+      const gx = w * 0.5 + (c - 4) * holeSpacing;
+      const gy = h * 0.5 - (r - 4) * holeSpacing;
+      const key = r + ',' + c;
+      const hole = d.holes[key];
+      ctx.fillStyle = hole ? (hole.planted ? '#317456' : hole.fertile ? '#a35c00' : '#63707a') : '#d7dde2';
+      ctx.beginPath();
+      ctx.arc(gx, gy, 4, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+
+  // ── Draw robot (rectangle) ─────────────────────────────────
+  const robW = 115 * S, robH = 170 * S;
   ctx.save();
   ctx.translate(cx, cy);
-  ctx.rotate(-headRad);
+  ctx.rotate(headRad);
+  // Chassis
   ctx.fillStyle = '#246b9f';
-  ctx.beginPath();
-  ctx.arc(0, 0, 8, 0, Math.PI*2);
-  ctx.fill();
+  ctx.fillRect(-robW / 2, -robH / 2, robW, robH);
   ctx.strokeStyle = '#172026';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-robW / 2, -robH / 2, robW, robH);
+  // Heading indicator (arrow)
+  ctx.fillStyle = '#fff';
   ctx.beginPath();
-  ctx.moveTo(0, -12);
-  ctx.lineTo(0, 12);
-  ctx.stroke();
+  ctx.moveTo(0, -robH / 2 - 4);
+  ctx.lineTo(-4, -robH / 2 + 2);
+  ctx.lineTo(4, -robH / 2 + 2);
+  ctx.fill();
   ctx.restore();
 
-  // Draw UDS cones
-  const udsAngles = [-32, 0, 32];
+  // ── UDS positions and cones ──────────────────────────────
+  // Side UDS: 50mm behind, 66mm sideways, 32° yaw
+  // Front (mid) UDS: 85mm forward, centre
+  const udsPos = [
+    { sx: -66 * S, sy: -50 * S, yaw: -32 },
+    { sx:   0,      sy:  85 * S, yaw: 0 },
+    { sx:  66 * S,  sy: -50 * S, yaw: 32 }
+  ];
   const udsColors = ['#317456', '#317456', '#317456'];
   const udsRanges = [d.uds[0], d.uds[1], d.uds[2]];
   for (let i = 0; i < 3; i++) {
-    const range = Math.min(udsRanges[i] * 0.8, 60);
+    const ux = cx + udsPos[i].sx * Math.cos(headRad) + udsPos[i].sy * Math.sin(headRad);
+    const uy = cy + udsPos[i].sx * Math.sin(headRad) - udsPos[i].sy * Math.cos(headRad);
+    const range = Math.min(udsRanges[i], 100) * 0.8;
     ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(-headRad + udsAngles[i] * Math.PI / 180 - Math.PI/2);
+    ctx.translate(ux, uy);
+    ctx.rotate(headRad + udsPos[i].yaw * Math.PI / 180 - Math.PI / 2);
     ctx.fillStyle = udsColors[i] + '44';
     ctx.beginPath();
     ctx.moveTo(0, 0);
     ctx.arc(0, 0, range, -0.17, 0.17);
     ctx.fill();
     ctx.restore();
-  }
-
-  // Hole grid on map
-  for (let r = 0; r < 9; r++) {
-    for (let c = 0; c < 9; c++) {
-      const hx = w * 0.5 + (c - 4) * 14;
-      const hy = h * 0.5 - (r - 4) * 14;
-      const key = r + ',' + c;
-      const hole = d.holes[key];
-      ctx.fillStyle = hole ? (hole.planted ? '#317456' : hole.fertile ? '#a35c00' : '#63707a') : '#d7dde2';
-      ctx.beginPath();
-      ctx.arc(hx, hy, 3, 0, Math.PI*2);
-      ctx.fill();
-    }
+    // UDS dot
+    ctx.fillStyle = '#317456';
+    ctx.beginPath();
+    ctx.arc(ux, uy, 2, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   // Log

@@ -27,7 +27,7 @@ MFRC522_I2C rfid(0x28, -1, &Wire1);
 ArenaMap arena;
 Localisation loc;
 IMUData imuData;
-MQTTManager mqtt("Terminator");   // TODO: change to your robot name
+MQTTManager mqtt("Haunter");
 MotionSM motion;                   // non-blocking motion controller
 
 // ── Encoder polling (50 Hz, replaces ISR-based to avoid WiFi interference) ─
@@ -68,14 +68,14 @@ enum State {
   ST_INIT, ST_IDLE, ST_LOCATE, ST_PLAN,
   ST_NAVIGATE, ST_AVOID, ST_DEPOSIT,
   ST_RETURN_BASE, ST_REVIVE, ST_LET_IN,
-  ST_TEST
+  ST_EXIT_BASE, ST_TEST
 };
 
 const char* stateNames[] = {
   "INIT", "IDLE", "LOCATE", "PLAN",
   "NAVIGATE", "AVOID", "DEPOSIT",
-  "RETURN_BASE", "REVIVE", "LET_IN",
-  "TEST"
+  "RETURN_BASE", "REVIVE", "LET_IN",  
+  "EXIT_BASE", "TEST"
 };
 
 State state = ST_INIT;
@@ -142,6 +142,8 @@ long udsL, udsM, udsR;   // latest median-filtered readings
 int lightVal;
 char rfidBuf[32];
 bool rfidSeen = false;
+int8_t lastHoleReplyRow = -1, lastHoleReplyCol = -1;
+bool airlockAccepted = false;
 
 // ============================================================
 //  MQTT CALLBACKS
@@ -171,6 +173,8 @@ void onMqttHoleStatus(uint8_t row, uint8_t col, bool fertile, bool planted) {
   if (row < GRID_HOLES && col < GRID_HOLES) {
     holeFertile[row][col] = fertile;
     if (planted) holePlanted[row][col] = true;
+    lastHoleReplyRow = row;
+    lastHoleReplyCol = col;
   }
 }
 
@@ -183,6 +187,16 @@ void onMqttEmergency() {
 
 void onMqttRevive(const char* robotId) {
   mqtt.sendLog("revive requested");
+}
+
+void onMqttHeadingReset() {
+  loc.resetHeading(0.0f, imuData.headingDeg);
+  mqtt.sendLog("heading reset to 0");
+}
+
+void onMqttAirlockReply(bool accepted) {
+  airlockAccepted = accepted;
+  mqtt.sendLog(accepted ? "airlock accepted" : "airlock denied");
 }
 
 // ── Test mode: local blocking loop with full sensor reads ───
@@ -263,6 +277,16 @@ void onMqttTestCommand(const String& cmd) {
     runDeposit();
     state = ST_IDLE;
     mqtt.sendLog("deposit done");
+  }
+  else if (cmd == "EXIT_BASE") {
+    readIR(irVals);
+    irCentroidVal = irCentroid(irVals);
+    if (imuData.ok) readIMU(imuData);
+    pollEncoders();
+    state = ST_TEST;
+    runBaseExit();
+    state = ST_IDLE;
+    mqtt.sendLog("base exit done");
   }
 }
 
@@ -388,63 +412,315 @@ void runAvoid() {
   }
 }
 
-// ── Deposit Sequence (uses MotionSM for wiggle) ────────────
+// ── Deposit Sequence ────────────────────────────────────────
 void runDeposit() {
   mqtt.sendState("DEPOSIT");
 
-  bool holeConfirmed = false;
-  uint8_t holeRow = 0, holeCol = 0;
+  // ── 1. Round heading to nearest cardinal direction ────────
+  float h = loc.pose.headingDeg;
+  float cardinals[] = {0.0f, 90.0f, 180.0f, 270.0f};
+  int bestIdx = 0;
+  float bestD = 999.0f;
+  for (int i = 0; i < 4; i++) {
+    float d = fabsf(h - cardinals[i]);
+    if (d > 180.0f) d = 360.0f - d;
+    if (d < bestD) { bestD = d; bestIdx = i; }
+  }
+  float targetHeading = cardinals[bestIdx];
 
-  if (readRFID(rfidBuf, sizeof(rfidBuf)))
-    holeConfirmed = arena.rfidToHole(rfidBuf, holeRow, holeCol);
-
-  if (!holeConfirmed) {
-    int idx = arena.nearestHole((int16_t)loc.pose.x, (int16_t)loc.pose.y);
-    if (idx >= 0) { holeRow = idx / GRID_HOLES; holeCol = idx % GRID_HOLES; holeConfirmed = true; }
+  float turn = targetHeading - h;
+  if (turn > 180.0f) turn -= 360.0f;
+  if (turn < -180.0f) turn += 360.0f;
+  if (fabsf(turn) > 5.0f) {
+    mqtt.sendLog("deposit: turning to heading");
+    motion.startTurn(turn > 0 ? 1 : -1, TURN_SPEED, ticksForTurn(fabsf(turn)));
+    while (motion.tick(mc) == MotionSM::RUNNING) {
+      mqtt.loop(); delay(20); handleEStop(); if (killed) return;
+    }
+    delay(200);
   }
 
-  if (!holeConfirmed) { mqtt.sendLog("deposit: no hole found"); return; }
-  if (!holeFertile[holeRow][holeCol]) {
-    mqtt.sendLog("hole not fertile");
-    holePlanted[holeRow][holeCol] = true;
+  // ── 2. Move forward until RFID tag detected ───────────────
+  mqtt.sendLog("deposit: searching for tag");
+  unsigned long moveStart = millis();
+  bool tagFound = false;
+
+  while (millis() - moveStart < 15000) {
+    handleEStop(); if (killed) { setMotors(mc, 0, 0); return; }
+    mqtt.loop();
+    pollEncoders();
+
+    readIR(irVals);
+    irCentroidVal = irCentroid(irVals);
+    uds.tick();
+    if (imuData.ok) readIMU(imuData);
+    loc.update(encL, encR, imuData.headingDeg, imuData.gyroZ,
+               imuData.accX, imuData.accY, imuData.pitch, imuData.roll,
+               motorsRunning);
+
+    if (readRFID(rfidBuf, sizeof(rfidBuf))) {
+      tagFound = true;
+      setMotors(mc, 0, 0);
+      break;
+    }
+
+    // Heading hold + IR line follow
+    float hErr = targetHeading - imuData.headingDeg;
+    if (hErr > 180.0f) hErr -= 360.0f;
+    if (hErr < -180.0f) hErr += 360.0f;
+    int corr = (int)(hErr * 5.0f);
+    if (irCentroidVal >= 0)
+      corr += (irCentroidVal - 4000) / 200;
+    corr = constrain(corr, -STEERING_MAX_DIFF, STEERING_MAX_DIFF);
+    setMotors(mc, MOVE_SPEED + corr, MOVE_SPEED - corr);
+
+    delay(20);
+  }
+
+  if (!tagFound) {
+    setMotors(mc, 0, 0);
+    mqtt.sendLog("deposit: no tag found");
     return;
   }
 
-  // Centre over hole using IR
-  int baseSpeed = constrain(MOTOR_MIN + 30, MOTOR_MIN, MOTOR_MAX);
-  if (irCentroidVal >= 0) {
-    int left  = baseSpeed + constrain((irCentroidVal - 4000) / 100, -20, 20);
-    int right = baseSpeed - constrain((irCentroidVal - 4000) / 100, -20, 20);
-    left  = constrain(left,  MOTOR_MIN, MOTOR_MAX);
-    right = constrain(right, MOTOR_MIN, MOTOR_MAX);
-    setMotors(mc, left, right);
-    delay(300);
-    setMotors(mc, 0, 0);
+  // ── 3. Query server for fertility ──────────────────────────
+  mqtt.sendLog("deposit: checking fertility");
+  lastHoleReplyRow = -1;
+  lastHoleReplyCol = -1;
+  mqtt.sendIsFertile(rfidBuf);
+  unsigned long waitStart = millis();
+  while (millis() - waitStart < 10000) {
+    mqtt.loop(); delay(20);
+    if (lastHoleReplyRow >= 0) break;  // got reply
+    // Re-send query every 2s in case first one was dropped
+    if ((millis() - waitStart) > 2000 && (millis() - waitStart) % 2000 < 25)
+      mqtt.sendIsFertile(rfidBuf);
+    handleEStop(); if (killed) return;
   }
 
-  // Dispense seed
-  mqtt.sendLog("dispensing seed");
+  // ── 4. Use server reply coordinates ───────────────────────
+  if (lastHoleReplyRow < 0) {
+    mqtt.sendLog("deposit: no server reply");
+    return;
+  }
+  uint8_t holeRow = (uint8_t)lastHoleReplyRow;
+  uint8_t holeCol = (uint8_t)lastHoleReplyCol;
+  if (!holeFertile[holeRow][holeCol]) {
+    mqtt.sendLog("deposit: hole not fertile");
+    return;
+  }
+
+  // ── 5. Move forward to align chute over hole ──────────────
+  mqtt.sendLog("deposit: positioning");
+  motion.startStraight(MOVE_SPEED, ticksForDistance(DEPOSIT_EXTRA_MM));
+  while (motion.tick(mc) == MotionSM::RUNNING) {
+    mqtt.loop(); delay(20); handleEStop(); if (killed) return;
+  }
+
+  // ── 6. Dispense seed ───────────────────────────────────────
+  mqtt.sendLog("deposit: dispensing");
   dispenseSeed(servo, 1);
   delay(300);
 
-  // Wiggle forward/backward to clear chute (non-blocking via motion)
-  motion.startStraight(baseSpeed, ticksForDistance(30));    // 30mm wiggle
-  while (motion.tick(mc) == MotionSM::RUNNING) {
-    mqtt.loop(); delay(20);
-  }
-  motion.startStraight(-baseSpeed, ticksForDistance(30));
-  while (motion.tick(mc) == MotionSM::RUNNING) {
-    mqtt.loop(); delay(20);
-  }
-
+  // ── 7. Wiggle to clear chute ──────────────────────────────
+  int wiggleSpeed = constrain(MOTOR_MIN + 30, MOTOR_MIN, MOTOR_MAX);
+  motion.startStraight(wiggleSpeed, ticksForDistance(30));
+  while (motion.tick(mc) == MotionSM::RUNNING) { mqtt.loop(); delay(20); }
+  motion.startStraight(-wiggleSpeed, ticksForDistance(30));
+  while (motion.tick(mc) == MotionSM::RUNNING) { mqtt.loop(); delay(20); }
   lockSeeds(servo);
 
+  // ── 8. Mark planted ───────────────────────────────────────
   holePlanted[holeRow][holeCol] = true;
-  // Send to server via standard protocol
   mqtt.sendSeedPlanted(rfidBuf);
-  // Broadcast to dashboard
   mqtt.sendHoleStatus(holeRow, holeCol, true, holeFertile[holeRow][holeCol]);
-  mqtt.sendLog("seed planted");
+  mqtt.sendLog("deposit: done");
+}
+
+// ── Base Exit Sequence ──────────────────────────────────────
+// Navigates through the base to the exit RFID, requests exit
+// permission, traverses the tunnel and exits when gravity normalises.
+void runBaseExit() {
+  mqtt.sendLog("base exit start");
+  mqtt.sendState("EXIT_BASE");
+
+  // Component Y-positions (mm from centre, +Y forward)
+  const float CHASSIS_BACK_Y  = -CHASSIS_LENGTH / 2;
+  const float CHASSIS_FRONT_Y =  CHASSIS_LENGTH / 2;
+  const float IR_TO_BACK_MM  = POS_IR_CENTRE_Y - CHASSIS_BACK_Y;
+  const float IR_TO_FRONT_MM = CHASSIS_FRONT_Y - POS_IR_CENTRE_Y;
+  const float IR_TO_RFID_MM  = POS_IR_CENTRE_Y - POS_RFID_ANTENNA_Y;
+  const float CHASSIS_BACK_TO_TREAD_BACK = 10;
+
+  const float EXIT_LEG1_MM = 460.0f - IR_TO_BACK_MM - CHASSIS_BACK_TO_TREAD_BACK;    // 460 - 102 = 358mm
+  const float EXIT_LEG2_MM = 330.0f;                     // 330mm
+  const float EXIT_LEG3_MM = 205.0f - IR_TO_RFID_MM;    // 205 - 27 = 178mm
+  const float EXIT_LEG4_MM = 205.0f + IR_TO_RFID_MM;    // 205 + 27 = 232mm
+  const float EXIT_LEG5_MM = 330.0f;                     // 330mm
+  const float EXIT_LEG6_MM = 320.0f - IR_TO_FRONT_MM;   // 320 - 68 = 252mm
+  const int   EXIT_TUNNEL_SPEED = 660;
+
+  // ── Leg 1: forward ──
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG1_MM));
+  mqtt.sendLog("exit leg 1");
+  while (motion.tick(mc) == MotionSM::RUNNING) { mqtt.loop(); delay(20); handleEStop(); if (killed) return; }
+
+  // ── Turn right 90 ──
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
+  mqtt.sendLog("exit turn right");
+  while (motion.tick(mc) == MotionSM::RUNNING) { mqtt.loop(); delay(20); handleEStop(); if (killed) return; }
+
+  // ── Leg 2: forward ──
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG2_MM));
+  mqtt.sendLog("exit leg 2");
+  while (motion.tick(mc) == MotionSM::RUNNING) { mqtt.loop(); delay(20); handleEStop(); if (killed) return; }
+
+  // ── Turn left 90 ──
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90));
+  mqtt.sendLog("exit turn left");
+  while (motion.tick(mc) == MotionSM::RUNNING) { mqtt.loop(); delay(20); handleEStop(); if (killed) return; }
+
+  // ── Leg 3: forward ──
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG3_MM));
+  mqtt.sendLog("exit leg 3");
+  while (motion.tick(mc) == MotionSM::RUNNING) { mqtt.loop(); delay(20); handleEStop(); if (killed) return; }
+
+  // ── Scan RFID ──
+  mqtt.sendLog("exit: scanning RFID");
+  bool tagFound = false;
+  for (int attempt = 0; attempt < 5 && !tagFound; attempt++) {
+    motion.startStraight(300, ticksForDistance(20));
+    while (motion.tick(mc) == MotionSM::RUNNING) {
+      mqtt.loop(); delay(20); handleEStop(); if (killed) return;
+      pollEncoders();
+      if (readRFID(rfidBuf, sizeof(rfidBuf))) { setMotors(mc, 0, 0); motion.stop(); tagFound = true; break; }
+    }
+  }
+  if (!tagFound) {
+    for (int attempt = 0; attempt < 5 && !tagFound; attempt++) {
+      motion.startStraight(-300, ticksForDistance(20));
+      while (motion.tick(mc) == MotionSM::RUNNING) {
+        mqtt.loop(); delay(20); handleEStop(); if (killed) return;
+        pollEncoders();
+        if (readRFID(rfidBuf, sizeof(rfidBuf))) { setMotors(mc, 0, 0); motion.stop(); tagFound = true; break; }
+      }
+    }
+  }
+  if (!tagFound) { mqtt.sendLog("exit: no RFID"); return; }
+  mqtt.sendLog("exit: RFID found");
+
+  // ── Ask server to exit ──
+  airlockAccepted = false;
+  mqtt.sendAirlockRequest("B", rfidBuf);
+  unsigned long waitStart = millis();
+  while (millis() - waitStart < 15000) {
+    mqtt.loop(); delay(20);
+    if (airlockAccepted) break;
+    if ((millis() - waitStart) > 2000 && (millis() - waitStart) % 2000 < 25)
+      mqtt.sendAirlockRequest("B", rfidBuf);
+    handleEStop(); if (killed) return;
+  }
+  if (!airlockAccepted) { mqtt.sendLog("exit: airlock denied"); return; }
+
+  // ── Leg 4: forward ──
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG4_MM));
+  mqtt.sendLog("exit leg 4");
+  while (motion.tick(mc) == MotionSM::RUNNING) { mqtt.loop(); delay(20); handleEStop(); if (killed) return; }
+
+  // ── Turn left 90 ──
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90));
+  mqtt.sendLog("exit turn left");
+  while (motion.tick(mc) == MotionSM::RUNNING) { mqtt.loop(); delay(20); handleEStop(); if (killed) return; }
+
+  // ── Leg 5: forward ──
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG5_MM));
+  mqtt.sendLog("exit leg 5");
+  while (motion.tick(mc) == MotionSM::RUNNING) { mqtt.loop(); delay(20); handleEStop(); if (killed) return; }
+
+  // ── Turn right 90 ──
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
+  mqtt.sendLog("exit turn right");
+  while (motion.tick(mc) == MotionSM::RUNNING) { mqtt.loop(); delay(20); handleEStop(); if (killed) return; }
+
+  // ── Leg 6: forward (to tunnel entrance) ──
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG6_MM));
+  mqtt.sendLog("exit leg 6");
+  while (motion.tick(mc) == MotionSM::RUNNING) { mqtt.loop(); delay(20); handleEStop(); if (killed) return; }
+
+  // ── Wait for tunnel door to open ──
+  mqtt.sendLog("exit: waiting for tunnel door");
+  delay(500);  // settle
+  // First wait for door to close (if it's already open)
+  unsigned long doorWait = millis();
+  bool doorClosed = false;
+  while (millis() - doorWait < 10000) {
+    mqtt.loop(); delay(20); handleEStop(); if (killed) return;
+    uds.tick();
+    filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+    if (filteredUdsM < 30.0f) { doorClosed = true; break; }
+  }
+  if (!doorClosed) { mqtt.sendLog("exit: tunnel already open, proceeding"); }
+  else {
+    // Door is closed, wait for it to open
+    while (true) {
+      mqtt.loop(); delay(20); handleEStop(); if (killed) return;
+      uds.tick();
+      filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+      if (filteredUdsM > 50.0f) break;
+    }
+  }
+  delay(300);
+
+  // ── Enter tunnel: CENTRE_TUNNEL at max speed ──
+  // Capture baseline pitch before slope
+  float exitPitchRef = imuData.pitch;
+  bool pitchChanged = false;
+  mqtt.sendLog("exit: entering tunnel");
+  motion.startTunnelCentre(EXIT_TUNNEL_SPEED, 1.0f, pidMaxDiff);
+  while (true) {
+    mqtt.loop();
+    if (handleEStop()) { motion.stop(); setMotors(mc, 0, 0); waitForUnkill(); return; }
+    pollEncoders();
+    uds.tick();
+    filteredUdsL = udsLFilter.update((float)uds.distances[UDSManager::LEFT]);
+    filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+    filteredUdsR = udsRFilter.update((float)uds.distances[UDSManager::RIGHT]);
+    if (imuData.ok) readIMU(imuData);
+
+    int mr = motion.tick(mc, -1, filteredUdsM, filteredUdsL, filteredUdsR);
+    if (mr != MotionSM::RUNNING) break;
+
+    // Check front UDS for second door
+    if (filteredUdsM < 30.0f) { motion.stop(); setMotors(mc, 0, 0); break; }
+    delay(20);
+  }
+
+  // ── Wait for second door to open ──
+  mqtt.sendLog("exit: waiting for second door");
+  doorWait = millis();
+  while (millis() - doorWait < 15000) {
+    mqtt.loop(); delay(20); handleEStop(); if (killed) return;
+    uds.tick();
+    filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+    if (filteredUdsM > 50.0f) break;
+  }
+
+  // ── Continue forward until gravity normalises ──
+  mqtt.sendLog("exit: continuing past tunnel");
+  setMotors(mc, EXIT_TUNNEL_SPEED, EXIT_TUNNEL_SPEED);
+  unsigned long pitchStart = millis();
+  while (millis() - pitchStart < 30000) {
+    mqtt.loop(); delay(20);
+    if (handleEStop()) { setMotors(mc, 0, 0); waitForUnkill(); return; }
+    pollEncoders();
+    if (imuData.ok) readIMU(imuData);
+
+    float pitchDiff = fabsf(imuData.pitch - exitPitchRef);
+    if (pitchDiff > 8.0f) pitchChanged = true;
+    if (pitchChanged && pitchDiff < 3.0f) break;
+  }
+  setMotors(mc, 0, 0);
+  mqtt.sendLog("base exit done");
 }
 
 void runReturnBase() {
@@ -467,10 +743,13 @@ void setup() {
   mqtt.onEnable     = onMqttEnable;
   mqtt.onDisable    = onMqttDisable;
   mqtt.onEmergency  = onMqttEmergency;
-  mqtt.onPidTune    = onMqttPidTune;
+  mqtt.onPidTune = onMqttPidTune;
   mqtt.onHoleStatus = onMqttHoleStatus;
-  mqtt.onRevive     = onMqttRevive;
-  mqtt.onTestCommand = onMqttTestCommand;
+  mqtt.onHeadingReset = onMqttHeadingReset;
+  mqtt.onHeadingReset = onMqttHeadingReset;
+  mqtt.onRevive       = onMqttRevive;
+  mqtt.onTestCommand   = onMqttTestCommand;
+  mqtt.onAirlockReply = onMqttAirlockReply;
   Serial.print("MQTT: connecting");
   mqtt.begin();
   for (int i = 0; i < 50 && !mqtt.isConnected(); i++) {
@@ -648,6 +927,7 @@ void loop() {
       case ST_AVOID:       runAvoid();       break;
       case ST_DEPOSIT:     runDeposit();     break;
       case ST_RETURN_BASE: runReturnBase();  break;
+      case ST_EXIT_BASE:   runBaseExit();    break;
       case ST_REVIVE:      /* todo */        break;
       case ST_LET_IN:      /* todo */        break;
       case ST_TEST:        /* handled by callback */ break;
