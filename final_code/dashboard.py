@@ -354,6 +354,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:REVIVE')">Revive</button>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:GRID_NAV')">Grid Nav</button>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:GRID_NAV_NOLINES')">Grid Nav (no lines)</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:OBSTACLE_AVOIDANCE')">Obstacle Avoidance</button>
     </div>
   </div>
 
