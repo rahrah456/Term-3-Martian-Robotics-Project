@@ -35,7 +35,7 @@ robot_state = {
     "heading": 0.0,
     "holes": {},
     "log": [],
-    "seedIdx": 1
+    "seedIdx": 0
 }
 
 sse_clients = []      # list of queue.Queue for SSE push
@@ -365,15 +365,20 @@ function clickSeed(event) {
   const scale = canvas.width / rect.width;
   const mx = (event.clientX - rect.left) * scale;
   const my = (event.clientY - rect.top) * scale;
-  const cx = 80, cy = 80, outerR = 55, innerR = 11, orbitR = 40;
+  const cx = 80, cy = 80, orbitR = 40, innerR = 11;
   const curI = (lastState && lastState.seedIdx >= 0) ? lastState.seedIdx : 0;
-  const rot = -curI * Math.PI / 3;  // 60° steps
+  const rot = -curI * Math.PI / 3;
   for (let i = 0; i < 6; i++) {
     const a = i * Math.PI / 3 + rot;
     const sx = cx + orbitR * Math.sin(a);
     const sy = cy - orbitR * Math.cos(a);
     const d = Math.hypot(mx - sx, my - sy);
-    if (d < innerR + 3) { sendCmd('SEED:' + i); break; }
+    if (d < innerR + 3) {
+      sendCmd('SEED:' + i);
+      // Optimistic local update so animation works even without robot
+      if (lastState) { lastState.seedIdx = i; update(lastState); }
+      break;
+    }
   }
 }
 
