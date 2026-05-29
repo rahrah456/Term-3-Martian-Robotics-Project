@@ -57,13 +57,16 @@ public:
   void (*onRevive)(const char* robotId);
   void (*onTestCommand)(const String& cmd);
   void (*onPidTune)(const String& key, float val);
+  void (*onHeadingReset)();
+  void (*onAirlockReply)(bool accepted);
 
   MQTTManager(const char* id)
     : boardId(id), serverAllow(false), dashboardDesired(false),
       onEnable(nullptr), onDisable(nullptr),
       onEmergency(nullptr), onHoleStatus(nullptr),
       onRevive(nullptr), onTestCommand(nullptr),
-      onPidTune(nullptr) {}
+      onPidTune(nullptr), onHeadingReset(nullptr),
+      onAirlockReply(nullptr) {}
 
   // ── Priority model ─────────────────────────────────────────
   // serverAllow = medium (server heartbeat).
@@ -142,12 +145,11 @@ public:
     messenger.sendToBoard("server", buf);
   }
 
-  void sendAirlockRequest(bool entry) {
-    char buf[64];
+  void sendAirlockRequest(const char* airlockId, const char* tagId) {
+    char buf[80];
     snprintf(buf, sizeof(buf),
-             "type=%s board_id=%s",
-             entry ? "openAirlockA" : "openAirlockB",
-             boardId);
+             "type=openAirlock airlock=%s tag_id=%s board_id=%s",
+             airlockId, tagId, boardId);
     messenger.sendToBoard("server", buf);
   }
 
@@ -253,8 +255,10 @@ public:
       if (strcmp(typeVal, "openAirlockReply") == 0) {
         char acc[8];
         if (getKeyValue(msg, "accepted", acc, sizeof(acc))) {
+          bool ok = (strcmp(acc, "true") == 0);
           Serial.print("MQTT: airlock ");
-          Serial.println(strcmp(acc, "true") == 0 ? "accepted" : "denied");
+          Serial.println(ok ? "accepted" : "denied");
+          if (onAirlockReply) onAirlockReply(ok);
         }
         return;
       }
@@ -304,6 +308,12 @@ public:
     // Revive request: REVIVE:robotId
     if (strncmp(msg, "REVIVE:", 7) == 0) {
       if (onRevive) onRevive(msg + 7);
+      return;
+    }
+
+    // Reset heading heading
+    if (strcmp(msg, "HEADING:0") == 0 || strcmp(msg, "RESET_HEADING") == 0) {
+      if (onHeadingReset) onHeadingReset();
       return;
     }
 
