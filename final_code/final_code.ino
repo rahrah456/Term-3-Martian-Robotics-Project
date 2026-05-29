@@ -310,6 +310,26 @@ void onMqttTestCommand(const String& cmd) {
     state = ST_IDLE;
     mqtt.sendLog("revive done");
   }
+  else if (cmd == "GRID_NAV") {
+    readIR(irVals);
+    irCentroidVal = irCentroid(irVals);
+    if (imuData.ok) readIMU(imuData);
+    pollEncoders();
+    state = ST_TEST;
+    runGridNav();
+    state = ST_IDLE;
+    mqtt.sendLog("grid nav done");
+  }
+  else if (cmd == "DEAD_RECKON") {
+    readIR(irVals);
+    irCentroidVal = irCentroid(irVals);
+    if (imuData.ok) readIMU(imuData);
+    pollEncoders();
+    state = ST_TEST;
+    runDeadReckon();
+    state = ST_IDLE;
+    mqtt.sendLog("dead reckon done");
+  }
 }
 
 // ============================================================
@@ -542,7 +562,6 @@ void runDeposit() {
   // ── 6. Dispense seed ───────────────────────────────────────
   mqtt.sendLog("deposit: dispensing");
   dispenseNextSeed(servo);
-  delay(300);
 
   // ── 7. Wiggle to clear chute ──────────────────────────────
   int wiggleSpeed = constrain(MOTOR_MIN + 30, MOTOR_MIN, MOTOR_MAX);
@@ -743,6 +762,134 @@ void runBaseExit() {
   }
   setMotors(mc, 0, 0);
   mqtt.sendLog("base exit done");
+}
+
+// ── Grid Navigation + Dead Reckoning ────────────────────────
+// Shared helper: drive a distance at a given heading, scanning for RFID.
+// Returns true if an RFID tag was found (and snaps pose via server reply).
+static bool driveSegment(float heading, long targetTicks, bool useLineFollow,
+                          uint8_t& outRow, uint8_t& outCol) {
+  long startEnc = (abs(encL) + abs(encR)) / 2;
+  unsigned long deadline = millis() + 30000;
+  while (millis() < deadline) {
+    mqtt.loop();
+    if (handleEStop()) { setMotors(mc, 0, 0); return false; }
+    pollEncoders();
+    readIR(irVals);
+    irCentroidVal = irCentroid(irVals);
+    if (imuData.ok) readIMU(imuData);
+
+    // RFID found → query server, snap position
+    if (readRFID(rfidBuf, sizeof(rfidBuf))) {
+      setMotors(mc, 0, 0);
+      mqtt.sendIsFertile(rfidBuf);
+      unsigned long t0 = millis();
+      lastHoleReplyRow = -1;
+      while (millis() - t0 < 5000) {
+        mqtt.loop(); delay(20);
+        if (lastHoleReplyRow >= 0) break;
+      }
+      if (lastHoleReplyRow >= 0) {
+        outRow = (uint8_t)lastHoleReplyRow;
+        outCol = (uint8_t)lastHoleReplyCol;
+        loc.correctFromRFID(arena, outRow, outCol);
+        return true;
+      }
+    }
+
+    long avgEnc = (abs(encL) + abs(encR)) / 2;
+    if (avgEnc - startEnc >= targetTicks) { setMotors(mc, 0, 0); return false; }
+
+    float hErr = heading - imuData.headingDeg;
+    if (hErr > 180.0f) hErr -= 360.0f;
+    if (hErr < -180.0f) hErr += 360.0f;
+    int corr = (int)(hErr * 5.0f);
+    if (useLineFollow && irCentroidVal >= 0) {
+      float lErr = (irCentroidVal - 4000) / 700.0f;
+      lErr = constrain(lErr, -5.0f, 5.0f);
+      corr += (int)(lErr * 5.0f);
+    }
+    corr = constrain(corr, -STEERING_MAX_DIFF, STEERING_MAX_DIFF);
+    setMotors(mc, MOVE_SPEED + corr, MOVE_SPEED - corr);
+    delay(20);
+  }
+  return false;
+}
+
+static void backtrack50() {
+  long target = ticksForDistance(50);
+  long start = (abs(encL) + abs(encR)) / 2;
+  unsigned long t0 = millis();
+  while (millis() - t0 < 5000) {
+    pollEncoders();
+    if ((abs(encL) + abs(encR)) / 2 - start >= target) break;
+    setMotors(mc, -300, -300);
+    mqtt.loop(); delay(20);
+    if (handleEStop()) { setMotors(mc, 0, 0); return; }
+  }
+  setMotors(mc, 0, 0);
+  delay(200);
+}
+
+// Try forward, then +5°, then −5° from original heading.
+// heading is updated to whichever heading succeeded.
+static bool moveAndSnap(float distMm, float& heading, bool useLineFollow,
+                         uint8_t& outRow, uint8_t& outCol) {
+  float tries[] = {heading, heading + 5.0f, heading - 5.0f};
+  for (int i = 0; i < 3; i++) {
+    bool found = driveSegment(tries[i], ticksForDistance(distMm),
+                               useLineFollow, outRow, outCol);
+    heading = tries[i];
+    if (found) return true;
+    if (i < 2) backtrack50();
+  }
+  mqtt.sendLog("nav: rfid not found");
+  return false;
+}
+
+static void runNodePath(bool useLineFollow) {
+  mqtt.sendLog(useLineFollow ? "grid nav start" : "dead reckon start");
+
+  uint8_t row, col;
+  float heading = loc.pose.headingDeg;
+
+  // Leg 1: forward 2 nodes
+  if (moveAndSnap(250.0f, heading, useLineFollow, row, col))
+    mqtt.sendLog("node 1");
+  if (moveAndSnap(250.0f, heading, useLineFollow, row, col))
+    mqtt.sendLog("node 2");
+
+  // Turn right 90
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
+  while (motion.tick(mc) == MotionSM::RUNNING) { mqtt.loop(); delay(20); handleEStop(); if (killed) return; }
+  heading = loc.pose.headingDeg;
+  delay(200);
+
+  // Leg 2: forward 1 node
+  if (moveAndSnap(250.0f, heading, useLineFollow, row, col))
+    mqtt.sendLog("node 3");
+
+  // Turn left 90
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90));
+  while (motion.tick(mc) == MotionSM::RUNNING) { mqtt.loop(); delay(20); handleEStop(); if (killed) return; }
+  heading = loc.pose.headingDeg;
+  delay(200);
+
+  // Leg 3: forward 2 nodes
+  if (moveAndSnap(250.0f, heading, useLineFollow, row, col))
+    mqtt.sendLog("node 4");
+  if (moveAndSnap(250.0f, heading, useLineFollow, row, col))
+    mqtt.sendLog("node 5");
+}
+
+void runGridNav() {
+  mqtt.sendState("GRID_NAV");
+  runNodePath(true);
+}
+
+void runDeadReckon() {
+  mqtt.sendState("DEAD_RECKON");
+  runNodePath(false);
 }
 
 void runReturnBase() {

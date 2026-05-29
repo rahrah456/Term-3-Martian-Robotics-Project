@@ -320,23 +320,23 @@ struct MotionSM {
 extern int g_seedIdx;   // current servo index (0=locked, 1-5 dispensed next)
 
 // ── Seed Dispensing ─────────────────────────────────────────
+// All functions are non-blocking — servo.write() sets the target
+// and returns immediately; the servo moves asynchronously.
+
 void lockSeeds(Servo& servo) {
   g_seedIdx = 0;
   servo.write(SEED_ANGLES[0]);
-  delay(300);
 }
 
 void dispenseSeed(Servo& servo, int position) {
   if (position < 0 || position >= SEED_COUNT) return;
   g_seedIdx = position;
   servo.write(SEED_ANGLES[position]);
-  delay(500);
 }
 
 void dispenseNextSeed(Servo& servo) {
   if (g_seedIdx < 1 || g_seedIdx >= SEED_COUNT) return;
   servo.write(SEED_ANGLES[g_seedIdx]);
-  delay(500);
   g_seedIdx++;
   if (g_seedIdx >= SEED_COUNT) g_seedIdx = SEED_COUNT - 1;
 }
