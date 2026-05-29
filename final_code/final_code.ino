@@ -320,15 +320,15 @@ void onMqttTestCommand(const String& cmd) {
     state = ST_IDLE;
     mqtt.sendLog("grid nav done");
   }
-  else if (cmd == "DEAD_RECKON") {
+  else if (cmd == "GRID_NAV_NOLINES") {
     readIR(irVals);
     irCentroidVal = irCentroid(irVals);
     if (imuData.ok) readIMU(imuData);
     pollEncoders();
     state = ST_TEST;
-    runDeadReckon();
+    runGridNavNoLines();
     state = ST_IDLE;
-    mqtt.sendLog("dead reckon done");
+    mqtt.sendLog("grid nav nolines done");
   }
 }
 
@@ -887,8 +887,8 @@ void runGridNav() {
   runNodePath(true);
 }
 
-void runDeadReckon() {
-  mqtt.sendState("DEAD_RECKON");
+void runGridNavNoLines() {
+  mqtt.sendState("GRID_NAV_NOLINES");
   runNodePath(false);
 }
 

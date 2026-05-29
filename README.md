@@ -12,19 +12,19 @@ An autonomous robot that navigates a 2.5 m x 2.5 m (actually 2.4 m x 2.4 m..
 
 ### Prerequisites
 
-- **Arduino Giga R1 WiFi** (or another board with similar I/O and WiFi capability)
-- c**Arduino IDE** (or arduino-cli) with core support for your board
-- **Python 3.9+** and `pip` for the dashboard
+- Arduino Giga R1 WiFi
+- Arduino IDE (v2)
+- Python 3.9+ and `pip`
 
 ### Installation
 
 - Open `final_code/final_code.ino` in the Arduino IDE.
 
-- Copy `final_code/secrets.h` into the sketch folder and update the credentials:
+- Fill in `final_code/secrets.h` with your credentials:
   
   `WIFI_SSID` / `WIFI_PASSWORD` - your 2.4 GHz WiFi network
   
-  `BROKER_HOST` - IP of your MQTT broker (the lab provides one; or run Mosquitto locally)
+  `BROKER_HOST` - IP of your MQTT broker
   
   `GROUP_ID` - your team number
 
@@ -51,7 +51,7 @@ pip install paho-mqtt
 python dashboard.py
 ```
 
-Open the URL printed in the terminal (default `http://localhost:8081`). The dashboard shows a map view, sensor readings, PID tuning sliders, and test command buttons.
+Open the URL `http://localhost:8081`. The dashboard shows a map view, sensor readings, PID tuning sliders, and test command buttons, and more.
 
 ---
 
@@ -71,7 +71,7 @@ final_code/              # Main robot sketch and dashboard
 archive/                 # Previous prototypes and test sketches
 ```
 
-The robot code is split into header files by concern, all `#include`d by the single `.ino`. There is no `.cpp` - everything is in headers for simplicity.
+The robot code is split into header files by concern, all `#include`d by the single `.ino`. There is no `.cpp` and everything is in headers for simplicity.
 
 ---
 
