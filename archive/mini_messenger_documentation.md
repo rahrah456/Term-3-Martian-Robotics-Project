@@ -129,20 +129,79 @@ These messages can change before the challenge finals (unlikely), please refer t
 | `register` | `type=register team_id=5 board_id=1` | **Mandatory.** Must be sent every ~10s to stay "Online". |
 | `isFertile` | `type=isFertile tag_id=ABC12345 board_id=1` | Sent when scanning an RFID tag to check planting status. |
 | `seedPlanted`| `type=seedPlanted tag_id=ABC12345 board_id=1`| Sent after planting to update the server map. |
-| `openAirlockA`| `type=openAirlockA board_id=1` | Request to enter the restricted zone. |
-| `openAirlockB`| `type=openAirlockB board_id=1` | Request to leave the restricted zone. |
+| `openAirlock`| `type=openAirlock airlock=A tag_id=ABC12345 board_id=1` | Request entry/exit permission. A or B on airlock. **Requires tag_id.** |
+| `reviveRequest`| `type=reviveRequest target_team=12 target_board=1`| Revive a stranded robot (must be adjacent). |
+| `getMap` | `type=getMap board_id=1` | Request a direct binary map refresh. |
 
 ### B. Server to Robot (Downlink)
 
 | Type | Example Payload | Description |
 | :--- | :--- | :--- |
-| `heartbeat` | `type=heartbeat enable=1 seq=100` | Sent every 250ms. `enable=1` allows movement; `0` forces a stop. |
-| `isFertileReply`| `type=isFertileReply fertile=true planted=false x=6 y=7` | Server response with tag data. |
+| `heartbeat` | `type=heartbeat enable=1 seq=100 time_left=115` | `enable=1` allows movement; `0` forces stop. Time left on your run.|
+| `disable` | `type=disable enabled=false reason=stranded` | Robot is stranded/disabled until revived. |
+| `isFertileReply`| `type=isFertileReply fertile=true planted=false x=6 y=7` | Position and fertility response. |
 | `emergency` | `type=emergency enabled=true` | **Global Stop.** Triggered by the Big Red Button. Stop immediately! |
-| `disable` | `type=disable enabled=false reason=operator`| Targeted stop for your robot. |
-| `openAirlockReply`| `type=openAirlockReply accepted=true` | Permission to proceed through the airlock. |
+| `Grid Map` | `[Raw Binary 21 Bytes]` | **Global Topic.** Full 2-bit field state. |
+| `Distress Alert`| `type=distress count=1 robot0=12.1,5,3` | **Global Topic.** Information on stranded robots. |
+| `openAirlockReply`| `type=openAirlockReply airlock=A accepted=true queue_enter=0 queue_exit=0` | Confirmation of airlock request. If `accepted=false`, a `reason` (e.g., `queue_full`) is included. |
+| `reviveReply` | `type=reviveReply status=success target=1` | Confirmation of a successful rescue. |
 
 ---
+## Distinguishing Global & Team Messages
+### A. Team Status (Team Topic - 6 Bytes)
+The server broadcasts this 6-byte payload every second. Use it to coordinate movements with your teammates.
+
+| Byte | Field | Description |
+| :--- | :--- | :--- |
+| **0** | `queueExit` | Number of robots waiting to exit (Airlock B). |
+| **1** | `airlockBBusy` | `1` if the Exit door is currently opening/closing. |
+| **2** | `queueEnter` | Number of robots waiting to enter (Airlock A). |
+| **3** | `airlockABusy` | `1` if the Entrance door is currently opening/closing. |
+| **4** | `emergency` | `1` if the team is in an Emergency stop state. |
+| **5** | **`reEntryRequested`** | **`1` if a robot has scanned the "Request Re-entry" tag.** |
+
+**Arduino Example:**
+```cpp
+void onMessage(const MessageMetadata& metadata, const uint8_t* payload, size_t length) {
+    // 1. Check for Team Status Broadcast
+    if (length == 6) {
+        bool reEntryFlag = (payload[5] == 1);
+        if (reEntryFlag) Serial.println("Base Re-entry Requested!");
+        return;
+    }
+    
+    // 2. Check for Occupancy Map
+    if (length == 21) {
+        // ... handle map
+        return;
+    }
+
+    // 3. Normal text handling...
+}
+```
+### B. Global Topic (21 Bytes or Text)
+Since the Occupancy Map and Distress Alerts both arrive on the **Global Broadcast** topic, use this logic to tell them apart:
+
+1.  **Check Length:** If the message is exactly **21 bytes**, it is the binary Occupancy Map.
+2.  **Check Content:** If it starts with `type=distress`, it is a text-based distress signal.
+
+---
+
+## Occupancy Map Protocol (lab/map/grid)
+
+The server broadcasts the full field state every 5 seconds (and instantly on changes). This is a raw binary payload, **not** text. You can also request an immediate update by sending `type=getMap board_id=1` (the server will reply directly to your board with the same binary payload).
+
+**Example Payload (Hex Representation):**
+A completely unexplored map (Fog of War) consists of 81 cells all set to state `3` (`11` in binary). This results in 21 bytes of data that looks like this in memory:
+`FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF 03`
+
+### 2-Bit Cell States
+Each cell in the 9x9 grid uses 2 bits to define its status. This protocol implements a **Fog of War** mechanic; robots only see the state of cells that have been "Explored" by any robot scanning them.
+
+*   **`00` (0): Sterile** - Explored and confirmed as non-fertile.
+*   **`01` (1): Fertile** - Explored and available for planting.
+*   **`10` (2): Seeded** - Explored and already occupied by a seed.
+*   **`11` (3): Unexplored** - Fog of War. The status of this cell is unknown until a robot visits it.
 
 
 ### Contributing and Linting

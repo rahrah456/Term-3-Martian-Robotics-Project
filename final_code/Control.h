@@ -384,21 +384,69 @@ struct MotionSM {
   }
 };
 
+// ── Seed Tracking ───────────────────────────────────────────
+extern int g_seedIdx;   // current servo index (0=locked, 1-5 dispensed next)
+
 // ── Seed Dispensing ─────────────────────────────────────────
-void dispenseSeed(Servo& servo, int position) {
-  if (position < 0 || position >= SEED_COUNT) return;
-  servo.write(SEED_ANGLES[position]);
-  delay(500);
-}
+// All functions are non-blocking — servo.write() sets the target
+// and returns immediately; the servo moves asynchronously.
 
 void lockSeeds(Servo& servo) {
+  g_seedIdx = 0;
   servo.write(SEED_ANGLES[0]);
-  delay(300);
+}
+
+void dispenseSeed(Servo& servo, int position) {
+  if (position < 0 || position >= SEED_COUNT) return;
+  g_seedIdx = position;
+  servo.write(SEED_ANGLES[position]);
+}
+
+void dispenseNextSeed(Servo& servo) {
+  if (g_seedIdx < 1 || g_seedIdx >= SEED_COUNT) return;
+  servo.write(SEED_ANGLES[g_seedIdx]);
+  g_seedIdx++;
+  if (g_seedIdx >= SEED_COUNT) g_seedIdx = SEED_COUNT - 1;
 }
 
 // ── Obstacle Detection ──────────────────────────────────────
 bool obstacleAhead(float udsMidCm) {
   return udsMidCm > 0 && udsMidCm < (OBSTACLE_STOP_MM / 10);
 }
+
+// ── Revive Move ─────────────────────────────────────────────
+// Open-loop straight with linear deceleration from startSpeed to
+// endSpeed.  Motors may stall on contact — overshoot is fine.
+struct ReviveMove {
+  long startEnc = 0, targetTicks = 0;
+  int startSpeed = 500, endSpeed = 350;
+  bool running = false;
+
+  void start(long target) {
+    running = true;
+    targetTicks = target;
+    startEnc = (abs(encL) + abs(encR)) / 2;
+  }
+
+  int tick(MotoronI2C& mc) {
+    if (!running) return MotionSM::DONE;
+    long avgEnc = (abs(encL) + abs(encR)) / 2;
+    long done = avgEnc - startEnc;
+    if (done >= targetTicks) {
+      setMotors(mc, 0, 0);
+      running = false;
+      return MotionSM::DONE;
+    }
+    float frac = (float)done / targetTicks;
+    int spd = startSpeed - (int)((startSpeed - endSpeed) * frac);
+    spd = constrain(spd, endSpeed, startSpeed);
+    setMotors(mc, spd, spd);
+    return MotionSM::RUNNING;
+  }
+
+  void stop() {
+    running = false;
+  }
+};
 
 #endif

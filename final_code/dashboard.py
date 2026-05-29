@@ -21,7 +21,7 @@ import paho.mqtt.client as mqtt
 MQTT_HOST = "192.168.0.74"
 MQTT_PORT = 1883
 GROUP_ID = "3"
-ROBOT_ID = "Terminator"       # Must match BoardId in final_code.ino
+ROBOT_ID = "Haunter"
 DASHBOARD_ID = "dash3"          # Must match DASHBOARD_ID in secrets.h
 HTTP_PORT = 8081
 
@@ -34,7 +34,8 @@ robot_state = {
     "uds": [0, 0, 0],
     "heading": 0.0,
     "holes": {},
-    "log": []
+    "log": [],
+    "seedIdx": 0
 }
 
 sse_clients = []      # list of queue.Queue for SSE push
@@ -68,6 +69,8 @@ def on_message(client, userdata, msg):
                 robot_state["ir"][i] = int(parts[1 + i])
             robot_state["uds"] = [int(parts[10]), int(parts[11]), int(parts[12])]
             robot_state["heading"] = float(parts[13])
+            if len(parts) >= 16:
+                robot_state["seedIdx"] = int(parts[15])
 
     elif payload.startswith("HOLE:"):
         parts = payload[5:].split(",")
@@ -164,6 +167,10 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                 mqtt_client.publish(topic, msg)
                 topic2 = f"group/{GROUP_ID}/board/{ROBOT_ID}"
                 mqtt_client.publish(topic2, msg)
+                # Local state update for SEED commands (so SSE push matches)
+                if msg.startswith("SEED:"):
+                    try: robot_state["seedIdx"] = int(msg[5:])
+                    except: pass
                 # Local feedback
                 robot_state["log"].append(f"CMD: {msg}")
                 if len(robot_state["log"]) > 50:
@@ -279,6 +286,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <div class="ctrl-row">
       <button class="btn btn-primary" onclick="sendCmd('ENABLE')">ENABLE</button>
       <button class="btn btn-secondary" onclick="sendCmd('DISABLE')">DISABLE</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('HEADING:0')" style="margin-top:4px;">Reset Heading</button>
     </div>
   </div>
 
@@ -299,6 +307,16 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <div style="font-size:12px;color:var(--muted);">centroid: <span id="irLabel">--</span></div>
   </div>
 
+  <!-- Seed Loader -->
+  <div class="card">
+    <h2>Seed Loader</h2>
+    <div style="text-align:center;">
+      <canvas id="seedCanvas" width="160" height="160"
+              style="width:160px;height:160px;cursor:pointer;"
+              onclick="clickSeed(event)"></canvas>
+    </div>
+  </div>
+
   <!-- Hole Status -->
   <div class="card">
     <h2>Holes (9&times;9)</h2>
@@ -316,7 +334,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     </div>
     <div class="cheatsheet" id="cheat">
       <b>Console commands:</b><br>
-      ENABLE &nbsp; DISABLE &nbsp; DEPOSIT<br>
+      ENABLE &nbsp; DISABLE &nbsp; DEPOSIT &nbsp; EXIT_BASE<br>
       TEST:FOLLOW_LINE:&lt;base&gt;,&lt;kp&gt;,&lt;ki&gt;,&lt;kd&gt;,&lt;md&gt;<br>
       TEST:FOLLOW_WALL:&lt;base&gt;,&lt;side&gt;,&lt;targetCm&gt;,&lt;kp&gt;,&lt;ki&gt;,&lt;kd&gt;,&lt;md&gt;<br>
       &lt;key&gt;:&lt;val&gt; &nbsp; (kp, ki, kd, md)
@@ -332,6 +350,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:FOLLOW_LINE:500,'+getPidStr())">Follow Line</button>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:FOLLOW_WALL:500,1,8.0,'+getWallPidStr())">Follow Wall (R, 8cm)</button>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:DEPOSIT')">Deposit</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:EXIT_BASE')">Exit Base</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:REVIVE')">Revive</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:GRID_NAV')">Grid Nav</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:GRID_NAV_NOLINES')">Grid Nav (no lines)</button>
     </div>
   </div>
 
@@ -343,6 +365,29 @@ HTML_PAGE = r"""<!DOCTYPE html>
 </div>
 
 <script>
+function clickSeed(event) {
+  const canvas = document.getElementById('seedCanvas');
+  const rect = canvas.getBoundingClientRect();
+  const scale = canvas.width / rect.width;
+  const mx = (event.clientX - rect.left) * scale;
+  const my = (event.clientY - rect.top) * scale;
+  const cx = 80, cy = 80, orbitR = 40, innerR = 11;
+  const curI = (lastState && lastState.seedIdx >= 0) ? lastState.seedIdx : 0;
+  const rot = -curI * Math.PI / 3;
+  for (let i = 0; i < 6; i++) {
+    const a = i * Math.PI / 3 + rot;
+    const sx = cx + orbitR * Math.sin(a);
+    const sy = cy - orbitR * Math.cos(a);
+    const d = Math.hypot(mx - sx, my - sy);
+    if (d < innerR + 3) {
+      sendCmd('SEED:' + i);
+      // Optimistic local update so animation works even without robot
+      if (lastState) { lastState.seedIdx = i; update(lastState); }
+      break;
+    }
+  }
+}
+
 function getPidStr() {
   return document.getElementById('kp').value + ',' +
          document.getElementById('ki').value + ',' +
@@ -480,55 +525,123 @@ function update(d) {
   ctx.fillStyle = '#fbfcfd';
   ctx.fillRect(0, 0, w, h);
 
-  // Draw robot
-  const cx = w * 0.5 + d.pose.x * 0.05;
-  const cy = h * 0.5 - d.pose.y * 0.05;
+  // Map scale: 0.15 px per mm
+  const S = 0.15;
+  const cx = w * 0.5 + d.pose.x * S;
+  const cy = h * 0.5 - d.pose.y * S;
   const headRad = d.pose.heading * Math.PI / 180;
+
+  // ── Hole grid (250mm spacing) ──────────────────────────────
+  const holeSpacing = 250 * S;
+  ctx.strokeStyle = '#e8ecf0';
+  ctx.lineWidth = 0.5;
+  for (let r = 0; r < 9; r++) {
+    for (let c = 0; c < 9; c++) {
+      const gx = w * 0.5 + (c - 4) * holeSpacing;
+      const gy = h * 0.5 - (r - 4) * holeSpacing;
+      const key = r + ',' + c;
+      const hole = d.holes[key];
+      ctx.fillStyle = hole ? (hole.planted ? '#317456' : hole.fertile ? '#a35c00' : '#63707a') : '#d7dde2';
+      ctx.beginPath();
+      ctx.arc(gx, gy, 4, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+
+  // ── Draw robot (rectangle) ─────────────────────────────────
+  const robW = 115 * S, robH = 170 * S;
   ctx.save();
   ctx.translate(cx, cy);
-  ctx.rotate(-headRad);
+  ctx.rotate(headRad);
+  // Chassis
   ctx.fillStyle = '#246b9f';
-  ctx.beginPath();
-  ctx.arc(0, 0, 8, 0, Math.PI*2);
-  ctx.fill();
+  ctx.fillRect(-robW / 2, -robH / 2, robW, robH);
   ctx.strokeStyle = '#172026';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-robW / 2, -robH / 2, robW, robH);
+  // Heading indicator (arrow)
+  ctx.fillStyle = '#fff';
   ctx.beginPath();
-  ctx.moveTo(0, -12);
-  ctx.lineTo(0, 12);
-  ctx.stroke();
+  ctx.moveTo(0, -robH / 2 - 4);
+  ctx.lineTo(-4, -robH / 2 + 2);
+  ctx.lineTo(4, -robH / 2 + 2);
+  ctx.fill();
   ctx.restore();
 
-  // Draw UDS cones
-  const udsAngles = [-32, 0, 32];
+  // ── UDS positions and cones ──────────────────────────────
+  // Side UDS: 50mm behind, 66mm sideways, 32° yaw
+  // Front (mid) UDS: 85mm forward, centre
+  const udsPos = [
+    { sx: -66 * S, sy: -50 * S, yaw: -32 },
+    { sx:   0,      sy:  85 * S, yaw: 0 },
+    { sx:  66 * S,  sy: -50 * S, yaw: 32 }
+  ];
   const udsColors = ['#317456', '#317456', '#317456'];
   const udsRanges = [d.uds[0], d.uds[1], d.uds[2]];
   for (let i = 0; i < 3; i++) {
-    const range = Math.min(udsRanges[i] * 0.8, 60);
+    const ux = cx + udsPos[i].sx * Math.cos(headRad) + udsPos[i].sy * Math.sin(headRad);
+    const uy = cy + udsPos[i].sx * Math.sin(headRad) - udsPos[i].sy * Math.cos(headRad);
+    const range = Math.min(udsRanges[i], 100) * 0.8;
     ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(-headRad + udsAngles[i] * Math.PI / 180 - Math.PI/2);
+    ctx.translate(ux, uy);
+    ctx.rotate(headRad + udsPos[i].yaw * Math.PI / 180 - Math.PI / 2);
     ctx.fillStyle = udsColors[i] + '44';
     ctx.beginPath();
     ctx.moveTo(0, 0);
     ctx.arc(0, 0, range, -0.17, 0.17);
     ctx.fill();
     ctx.restore();
+    // UDS dot
+    ctx.fillStyle = '#317456';
+    ctx.beginPath();
+    ctx.arc(ux, uy, 2, 0, Math.PI * 2);
+    ctx.fill();
   }
 
-  // Hole grid on map
-  for (let r = 0; r < 9; r++) {
-    for (let c = 0; c < 9; c++) {
-      const hx = w * 0.5 + (c - 4) * 14;
-      const hy = h * 0.5 - (r - 4) * 14;
-      const key = r + ',' + c;
-      const hole = d.holes[key];
-      ctx.fillStyle = hole ? (hole.planted ? '#317456' : hole.fertile ? '#a35c00' : '#63707a') : '#d7dde2';
-      ctx.beginPath();
-      ctx.arc(hx, hy, 3, 0, Math.PI*2);
-      ctx.fill();
+  // ── Seed loader ──────────────────────────────────────────────
+  const sCanvas = document.getElementById('seedCanvas');
+  const sCtx = sCanvas.getContext('2d');
+  const sW = sCanvas.width, sH = sCanvas.height;
+  sCtx.clearRect(0, 0, sW, sH);
+  const cxS = sW / 2, cyS = sH / 2;
+  const outerR = 55, innerR = 11, orbitR = 40;
+  const curSeed = d.seedIdx >= 0 ? d.seedIdx : 0;
+  const rotS = -curSeed * Math.PI / 3;   // 60° steps, selected chamber at top
+
+  // Outer ring
+  sCtx.strokeStyle = '#172026';
+  sCtx.lineWidth = 2;
+  sCtx.beginPath();
+  sCtx.arc(cxS, cyS, outerR, 0, Math.PI * 2);
+  sCtx.stroke();
+
+  for (let i = 0; i < 6; i++) {
+    if (i === 0) continue;   // position 0 is the invisible blocked spot
+    const a = i * Math.PI / 3 + rotS;
+    const sx = cxS + orbitR * Math.sin(a);
+    const sy = cyS - orbitR * Math.cos(a);
+    const filled = (i >= curSeed);
+    sCtx.beginPath();
+    sCtx.arc(sx, sy, innerR, 0, Math.PI * 2);
+    if (filled) {
+      sCtx.fillStyle = (i === curSeed) ? '#246b9f' : '#317456';
+      sCtx.fill();
     }
+    sCtx.strokeStyle = (i === curSeed) ? '#172026' : '#63707a';
+    sCtx.lineWidth = (i === curSeed) ? 2 : 1;
+    sCtx.stroke();
   }
+  // Clickable invisible spot at position 0 — outline only (thin grey arc hint)
+  const a0 = rotS;
+  const s0x = cxS + orbitR * Math.sin(a0);
+  const s0y = cyS - orbitR * Math.cos(a0);
+  sCtx.strokeStyle = '#d7dde2';
+  sCtx.lineWidth = 1;
+  sCtx.setLineDash([3, 4]);
+  sCtx.beginPath();
+  sCtx.arc(s0x, s0y, innerR, 0, Math.PI * 2);
+  sCtx.stroke();
+  sCtx.setLineDash([]);
 
   // Log
   const logBox = document.getElementById('logBox');
