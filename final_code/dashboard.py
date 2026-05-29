@@ -167,6 +167,10 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                 mqtt_client.publish(topic, msg)
                 topic2 = f"group/{GROUP_ID}/board/{ROBOT_ID}"
                 mqtt_client.publish(topic2, msg)
+                # Local state update for SEED commands (so SSE push matches)
+                if msg.startswith("SEED:"):
+                    try: robot_state["seedIdx"] = int(msg[5:])
+                    except: pass
                 # Local feedback
                 robot_state["log"].append(f"CMD: {msg}")
                 if len(robot_state["log"]) > 50:
