@@ -33,9 +33,12 @@ An autonomous robot that navigates a 2.5 m x 2.5 m (actually 2.4 m x 2.4 m..
   - **Motoron** (for motor control)
   - **MFRC522_I2C** (RFID reader)
   - **MiniMessenger** (MQTT wrapper)
+  - **LIS3MDL** (Magnetometer library)
+  - **LSM6** (Accelerometer library)
   - **Servo** (built-in)
   - **Wire** (built-in)
   - **Arduino** (built-in)
+  - **Math** (built-in)
 
 - Select your board and port, then upload.
 
@@ -79,9 +82,9 @@ The robot code is split into header files by concern, all `#include`d by the sin
 
 ### Sensing
 
-- **IR reflectance array** (9 sensors under the robot) detects line position via a centroid calculation. The IR emitters are charged and discharged each cycle to cancel ambient light.
-- **Ultrasonic rangefinders** (left, mid, right) provide obstacle distance with a rolling median filter.
-- **RFID** (MFRC522 on I²C) reads hole tags. The tag data is parsed via `arena.rfidToHole()` to give grid coordinates.
+- **IR reflectance array** (9 sensors under the robot) detects line position via a centroid calculation. The IR emitters used every other cycle to account for ambient light.
+- **Ultrasonic rangefinders** (left, mid, right) provide obstacle distance with median-of-3 noise rejection per sensor per cycle plus EMA smoothing (α=0.2).
+- **RFID** (MFRC522 on I²C) reads base and hole tags. The tag data is parsed via `arena.rfidToHole()` to give grid coordinates.
 - **IMU** (LIS3MDL magnetometer + LSM6 accelerometer/gyro) gives a tilt-compensated heading, used as the absolute orientation reference.
 
 ### Localisation
