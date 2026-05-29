@@ -426,35 +426,19 @@ void runNavigate() {
   }
 }
 
-// ── Obstacle Avoidance (uses MotionSM non-blocking) ────────
-// When entered, starts a turn → straight → turn sequence.
-// The main loop ticks motion every pass.
+// ── Obstacle Avoidance (uses AVOID_OBSTACLE, sensor-driven) ─
+// Started once on entering ST_AVOID; the main loop ticks
+// MotionSM until completion, then transitions to ST_PLAN.
 
 void runAvoid() {
-  static enum { TURN_RIGHT, GO, DONE } phase = TURN_RIGHT;
-  static bool fresh = true;
-
-  if (fresh) { phase = TURN_RIGHT; fresh = false; }
-
-  if (phase == TURN_RIGHT) {
-    if (motion.type == MotionSM::IDLE) {
-      motion.startTurn(-1, TURN_SPEED, ticksForTurn(45));
-      phase = GO;
-    }
+  static bool started = false;
+  if (!started) {
+    motion.startAvoid(MOVE_SPEED);
+    started = true;
   }
-  else if (phase == GO) {
-    if (motion.type == MotionSM::IDLE) {
-      motion.startStraight(MOVE_SPEED, ticksForDistance(300));  // 300mm
-      phase = DONE;
-    }
-  }
-  else {  // DONE
-    if (motion.type == MotionSM::IDLE) {
-      motion.startTurn(1, TURN_SPEED, ticksForTurn(45));
-      phase = TURN_RIGHT;
-      fresh = true;
-      state = ST_PLAN;
-    }
+  if (motion.type == MotionSM::IDLE) {
+    started = false;
+    state = ST_PLAN;
   }
 }
 
@@ -1086,7 +1070,8 @@ void loop() {
     if (mr != MotionSM::RUNNING) {
       if (mr == MotionSM::BLOCKED) {
         mqtt.sendLog("Obstacle detected! Commencing active UDS detour.");
-        motion.startAvoid(MOVE_SPEED); 
+        motion.stop();
+        state = ST_AVOID;
       }
     }
   }
@@ -1098,7 +1083,7 @@ void loop() {
       case ST_IDLE:        runIdle();        break;
       case ST_PLAN:        runPlan();        break;
       case ST_NAVIGATE:    runNavigate();    break;
-      case ST_AVOID:       runAvoid();       break;
+      case ST_AVOID:       runAvoid();       break;  // calls startAvoid once, transitions to ST_PLAN on completion
       case ST_DEPOSIT:     runDeposit();     break;
       case ST_RETURN_BASE: runReturnBase();  break;
       case ST_EXIT_BASE:   runBaseExit();    break;
