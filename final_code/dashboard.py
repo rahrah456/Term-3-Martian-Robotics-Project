@@ -365,16 +365,15 @@ function clickSeed(event) {
   const scale = canvas.width / rect.width;
   const mx = (event.clientX - rect.left) * scale;
   const my = (event.clientY - rect.top) * scale;
-  const cx = 80, cy = 80, outerR = 55, innerR = 14;
-  const seedAngles = [0, 100, 165, 230, 295];
-  const curI = (lastState && lastState.seedIdx > 0) ? lastState.seedIdx : 1;
-  const rot = -(seedAngles[curI - 1] || 0) * Math.PI / 180;
-  for (let i = 0; i < 5; i++) {
-    const a = seedAngles[i] * Math.PI / 180 + rot;
-    const sx = cx + outerR * Math.sin(a);
-    const sy = cy - outerR * Math.cos(a);
+  const cx = 80, cy = 80, outerR = 55, innerR = 11, orbitR = 40;
+  const curI = (lastState && lastState.seedIdx >= 0) ? lastState.seedIdx : 0;
+  const rot = -curI * Math.PI / 3;  // 60° steps
+  for (let i = 0; i < 6; i++) {
+    const a = i * Math.PI / 3 + rot;
+    const sx = cx + orbitR * Math.sin(a);
+    const sy = cy - orbitR * Math.cos(a);
     const d = Math.hypot(mx - sx, my - sy);
-    if (d < innerR) { sendCmd('SEED:' + (i + 1)); break; }
+    if (d < innerR + 3) { sendCmd('SEED:' + i); break; }
   }
 }
 
@@ -594,10 +593,9 @@ function update(d) {
   const sW = sCanvas.width, sH = sCanvas.height;
   sCtx.clearRect(0, 0, sW, sH);
   const cxS = sW / 2, cyS = sH / 2;
-  const outerR = 55, innerR = 14;
-  const seedAngles = [0, 100, 165, 230, 295];
-  const curSeed = (d.seedIdx > 0) ? d.seedIdx : 1;
-  const rotS = -(seedAngles[curSeed - 1] || 0) * Math.PI / 180;
+  const outerR = 55, innerR = 11, orbitR = 40;
+  const curSeed = d.seedIdx >= 0 ? d.seedIdx : 0;
+  const rotS = -curSeed * Math.PI / 3;   // 60° steps, selected chamber at top
 
   // Outer ring
   sCtx.strokeStyle = '#172026';
@@ -606,29 +604,33 @@ function update(d) {
   sCtx.arc(cxS, cyS, outerR, 0, Math.PI * 2);
   sCtx.stroke();
 
-  // 100° gap marker (between seed 1 and 2)
-  const gapStart = seedAngles[0] * Math.PI / 180 + rotS;
-  sCtx.strokeStyle = '#d7dde2';
-  sCtx.lineWidth = 3;
-  sCtx.beginPath();
-  sCtx.arc(cxS, cyS, outerR - 4, gapStart, gapStart + 100 * Math.PI / 180);
-  sCtx.stroke();
-
-  for (let i = 0; i < 5; i++) {
-    const a = seedAngles[i] * Math.PI / 180 + rotS;
-    const sx = cxS + outerR * Math.sin(a);
-    const sy = cyS - outerR * Math.cos(a);
-    const filled = (i + 1 >= curSeed);   // last n spots are loaded
+  for (let i = 0; i < 6; i++) {
+    if (i === 0) continue;   // position 0 is the invisible blocked spot
+    const a = i * Math.PI / 3 + rotS;
+    const sx = cxS + orbitR * Math.sin(a);
+    const sy = cyS - orbitR * Math.cos(a);
+    const filled = (i >= curSeed);
     sCtx.beginPath();
     sCtx.arc(sx, sy, innerR, 0, Math.PI * 2);
     if (filled) {
-      sCtx.fillStyle = (i + 1 === curSeed) ? '#246b9f' : '#317456';
+      sCtx.fillStyle = (i === curSeed) ? '#246b9f' : '#317456';
       sCtx.fill();
     }
-    sCtx.strokeStyle = (i + 1 === curSeed) ? '#172026' : '#63707a';
-    sCtx.lineWidth = (i + 1 === curSeed) ? 2 : 1;
+    sCtx.strokeStyle = (i === curSeed) ? '#172026' : '#63707a';
+    sCtx.lineWidth = (i === curSeed) ? 2 : 1;
     sCtx.stroke();
   }
+  // Clickable invisible spot at position 0 — outline only (thin grey arc hint)
+  const a0 = rotS;
+  const s0x = cxS + orbitR * Math.sin(a0);
+  const s0y = cyS - orbitR * Math.cos(a0);
+  sCtx.strokeStyle = '#d7dde2';
+  sCtx.lineWidth = 1;
+  sCtx.setLineDash([3, 4]);
+  sCtx.beginPath();
+  sCtx.arc(s0x, s0y, innerR, 0, Math.PI * 2);
+  sCtx.stroke();
+  sCtx.setLineDash([]);
 
   // Log
   const logBox = document.getElementById('logBox');
