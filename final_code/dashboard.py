@@ -34,7 +34,8 @@ robot_state = {
     "uds": [0, 0, 0],
     "heading": 0.0,
     "holes": {},
-    "log": []
+    "log": [],
+    "seedIdx": 0
 }
 
 sse_clients = []      # list of queue.Queue for SSE push
@@ -68,6 +69,8 @@ def on_message(client, userdata, msg):
                 robot_state["ir"][i] = int(parts[1 + i])
             robot_state["uds"] = [int(parts[10]), int(parts[11]), int(parts[12])]
             robot_state["heading"] = float(parts[13])
+            if len(parts) >= 16:
+                robot_state["seedIdx"] = int(parts[15])
 
     elif payload.startswith("HOLE:"):
         parts = payload[5:].split(",")
@@ -164,6 +167,10 @@ class DashboardHandler(http.server.BaseHTTPRequestHandler):
                 mqtt_client.publish(topic, msg)
                 topic2 = f"group/{GROUP_ID}/board/{ROBOT_ID}"
                 mqtt_client.publish(topic2, msg)
+                # Local state update for SEED commands (so SSE push matches)
+                if msg.startswith("SEED:"):
+                    try: robot_state["seedIdx"] = int(msg[5:])
+                    except: pass
                 # Local feedback
                 robot_state["log"].append(f"CMD: {msg}")
                 if len(robot_state["log"]) > 50:
@@ -300,6 +307,16 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <div style="font-size:12px;color:var(--muted);">centroid: <span id="irLabel">--</span></div>
   </div>
 
+  <!-- Seed Loader -->
+  <div class="card">
+    <h2>Seed Loader</h2>
+    <div style="text-align:center;">
+      <canvas id="seedCanvas" width="160" height="160"
+              style="width:160px;height:160px;cursor:pointer;"
+              onclick="clickSeed(event)"></canvas>
+    </div>
+  </div>
+
   <!-- Hole Status -->
   <div class="card">
     <h2>Holes (9&times;9)</h2>
@@ -346,6 +363,29 @@ HTML_PAGE = r"""<!DOCTYPE html>
 </div>
 
 <script>
+function clickSeed(event) {
+  const canvas = document.getElementById('seedCanvas');
+  const rect = canvas.getBoundingClientRect();
+  const scale = canvas.width / rect.width;
+  const mx = (event.clientX - rect.left) * scale;
+  const my = (event.clientY - rect.top) * scale;
+  const cx = 80, cy = 80, orbitR = 40, innerR = 11;
+  const curI = (lastState && lastState.seedIdx >= 0) ? lastState.seedIdx : 0;
+  const rot = -curI * Math.PI / 3;
+  for (let i = 0; i < 6; i++) {
+    const a = i * Math.PI / 3 + rot;
+    const sx = cx + orbitR * Math.sin(a);
+    const sy = cy - orbitR * Math.cos(a);
+    const d = Math.hypot(mx - sx, my - sy);
+    if (d < innerR + 3) {
+      sendCmd('SEED:' + i);
+      // Optimistic local update so animation works even without robot
+      if (lastState) { lastState.seedIdx = i; update(lastState); }
+      break;
+    }
+  }
+}
+
 function getPidStr() {
   return document.getElementById('kp').value + ',' +
          document.getElementById('ki').value + ',' +
@@ -555,6 +595,51 @@ function update(d) {
     ctx.arc(ux, uy, 2, 0, Math.PI * 2);
     ctx.fill();
   }
+
+  // ── Seed loader ──────────────────────────────────────────────
+  const sCanvas = document.getElementById('seedCanvas');
+  const sCtx = sCanvas.getContext('2d');
+  const sW = sCanvas.width, sH = sCanvas.height;
+  sCtx.clearRect(0, 0, sW, sH);
+  const cxS = sW / 2, cyS = sH / 2;
+  const outerR = 55, innerR = 11, orbitR = 40;
+  const curSeed = d.seedIdx >= 0 ? d.seedIdx : 0;
+  const rotS = -curSeed * Math.PI / 3;   // 60° steps, selected chamber at top
+
+  // Outer ring
+  sCtx.strokeStyle = '#172026';
+  sCtx.lineWidth = 2;
+  sCtx.beginPath();
+  sCtx.arc(cxS, cyS, outerR, 0, Math.PI * 2);
+  sCtx.stroke();
+
+  for (let i = 0; i < 6; i++) {
+    if (i === 0) continue;   // position 0 is the invisible blocked spot
+    const a = i * Math.PI / 3 + rotS;
+    const sx = cxS + orbitR * Math.sin(a);
+    const sy = cyS - orbitR * Math.cos(a);
+    const filled = (i >= curSeed);
+    sCtx.beginPath();
+    sCtx.arc(sx, sy, innerR, 0, Math.PI * 2);
+    if (filled) {
+      sCtx.fillStyle = (i === curSeed) ? '#246b9f' : '#317456';
+      sCtx.fill();
+    }
+    sCtx.strokeStyle = (i === curSeed) ? '#172026' : '#63707a';
+    sCtx.lineWidth = (i === curSeed) ? 2 : 1;
+    sCtx.stroke();
+  }
+  // Clickable invisible spot at position 0 — outline only (thin grey arc hint)
+  const a0 = rotS;
+  const s0x = cxS + orbitR * Math.sin(a0);
+  const s0y = cyS - orbitR * Math.cos(a0);
+  sCtx.strokeStyle = '#d7dde2';
+  sCtx.lineWidth = 1;
+  sCtx.setLineDash([3, 4]);
+  sCtx.beginPath();
+  sCtx.arc(s0x, s0y, innerR, 0, Math.PI * 2);
+  sCtx.stroke();
+  sCtx.setLineDash([]);
 
   // Log
   const logBox = document.getElementById('logBox');

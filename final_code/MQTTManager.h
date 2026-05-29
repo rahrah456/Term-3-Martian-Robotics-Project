@@ -16,6 +16,8 @@
 
 class MQTTManager;
 
+extern int g_seedIdx;
+
 static MQTTManager* g_mqtt = nullptr;
 
 static bool getKeyValue(const char* msg, const char* key,
@@ -59,6 +61,7 @@ public:
   void (*onPidTune)(const String& key, float val);
   void (*onHeadingReset)();
   void (*onAirlockReply)(bool accepted);
+  void (*onSeedSelect)(int index);
 
   MQTTManager(const char* id)
     : boardId(id), serverAllow(false), dashboardDesired(false),
@@ -66,7 +69,7 @@ public:
       onEmergency(nullptr), onHoleStatus(nullptr),
       onRevive(nullptr), onTestCommand(nullptr),
       onPidTune(nullptr), onHeadingReset(nullptr),
-      onAirlockReply(nullptr) {}
+      onAirlockReply(nullptr), onSeedSelect(nullptr) {}
 
   // ── Priority model ─────────────────────────────────────────
   // serverAllow = medium (server heartbeat).
@@ -190,11 +193,11 @@ public:
                            float heading, int lightVal) {
     char buf[256];
     snprintf(buf, sizeof(buf),
-             "SENSOR:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%ld,%ld,%ld,%.1f,%d",
+             "SENSOR:%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%ld,%ld,%ld,%.1f,%d,%d",
              centroid,
              irVals[0], irVals[1], irVals[2], irVals[3], irVals[4],
              irVals[5], irVals[6], irVals[7], irVals[8],
-             udsL, udsM, udsR, heading, lightVal);
+             udsL, udsM, udsR, heading, lightVal, g_seedIdx);
     messenger.sendToBoard(DASHBOARD_ID, buf);
   }
 
@@ -314,6 +317,13 @@ public:
     // Reset heading heading
     if (strcmp(msg, "HEADING:0") == 0 || strcmp(msg, "RESET_HEADING") == 0) {
       if (onHeadingReset) onHeadingReset();
+      return;
+    }
+
+    // Seed selection: SEED:1 through SEED:5
+    if (strncmp(msg, "SEED:", 5) == 0) {
+      int idx = atoi(msg + 5);
+      if (idx >= 0 && idx < SEED_COUNT && onSeedSelect) onSeedSelect(idx);
       return;
     }
 
