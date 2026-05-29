@@ -542,7 +542,6 @@ void runDeposit() {
   // ── 6. Dispense seed ───────────────────────────────────────
   mqtt.sendLog("deposit: dispensing");
   dispenseNextSeed(servo);
-  delay(300);
 
   // ── 7. Wiggle to clear chute ──────────────────────────────
   int wiggleSpeed = constrain(MOTOR_MIN + 30, MOTOR_MIN, MOTOR_MAX);
