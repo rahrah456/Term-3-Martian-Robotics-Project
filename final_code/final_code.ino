@@ -29,6 +29,7 @@ Localisation loc;
 IMUData imuData;
 MQTTManager mqtt("Haunter");
 MotionSM motion;                   // non-blocking motion controller
+ReviveMove revive;                 // decelerating open-loop push
 
 // ── Encoder polling (50 Hz, replaces ISR-based to avoid WiFi interference) ─
 // Reads both channels of each encoder and advances a full quadrature
@@ -287,6 +288,20 @@ void onMqttTestCommand(const String& cmd) {
     runBaseExit();
     state = ST_IDLE;
     mqtt.sendLog("base exit done");
+  }
+  else if (cmd == "REVIVE") {
+    float distMm = 2.0f * HOLE_SPACING_MM - CHASSIS_LENGTH;
+    pollEncoders();
+    revive.start(ticksForDistance(distMm));
+    state = ST_TEST;
+    while (revive.tick(mc) == MotionSM::RUNNING) {
+      mqtt.loop(); delay(20);
+      pollEncoders();
+      if (handleEStop()) { revive.stop(); setMotors(mc, 0, 0); break; }
+      if (!mqtt.isEffectivelyEnabled()) { revive.stop(); setMotors(mc, 0, 0); break; }
+    }
+    state = ST_IDLE;
+    mqtt.sendLog("revive done");
   }
 }
 
