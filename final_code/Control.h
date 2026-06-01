@@ -243,14 +243,11 @@ struct MotionSM {
 
       // ── LINE FOLLOW ───────────────────────────────────────
       case LINE_FOLLOW: {
-        if (millis() - startMs >= stopAfterMs)
-          { setMotors(mc, 0, 0); return result = DONE; }
-
         if (centroid < 0) {
           if (!wasHole) {
             wasHole = true; holeStart = millis();
           }
-          if (millis() - holeStart > 4000) {
+          if (millis() - holeStart > 20000) {
             setMotors(mc, 0, 0);
             return result = DONE;
           }
