@@ -85,7 +85,7 @@ bool handleEStop() {
   static bool lastBtn = HIGH;
   static unsigned long debounce = 0;
   bool btn = digitalRead(PIN_KILL_BTN);
-  if (btn == HIGH && lastBtn == LOW && millis() - debounce > 50) {
+  if (btn == LOW && lastBtn == HIGH && millis() - debounce > 50) {
     debounce = millis();
     killed = !killed;
     if (killed) { setMotors(mc, 0, 0); digitalWrite(PIN_ACT_LED, HIGH); mqtt.sendState("KILLED"); }
