@@ -226,7 +226,7 @@ void onMqttSeedSelect(int idx) {
 
 static void runTestLoop(unsigned long durationMs) {
   lastPublish = 0; // force instant publish on first pass
-  unsigned long endMs = millis() + durationMs;
+  unsigned long endMs = (durationMs == 0) ? 0xFFFFFFFF : millis() + durationMs;
   while (millis() < endMs) {
     mqtt.loop();
     if (handleEStop()) { setMotors(mc, 0, 0); motion.stop(); waitForUnkill(); break; }
@@ -272,7 +272,7 @@ void onMqttTestCommand(const String& cmd) {
     sscanf(cmd.c_str(), "FOLLOW_LINE:%d,%f,%f,%f,%d", &base, &p, &i, &d, &md);
     motion.startLineFollow(base, p, i, d, md, 20000);
     state = ST_TEST;
-    runTestLoop(10000);
+    runTestLoop(0);
     state = ST_IDLE;
     mqtt.sendLog("line follow done");
   }
