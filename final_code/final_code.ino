@@ -270,7 +270,7 @@ void onMqttTestCommand(const String& cmd) {
     float p = pidKp, i = pidKi, d = pidKd;
     int md = pidMaxDiff;
     sscanf(cmd.c_str(), "FOLLOW_LINE:%d,%f,%f,%f,%d", &base, &p, &i, &d, &md);
-    motion.startLineFollow(base, p, i, d, md, 10000);
+    motion.startLineFollow(base, p, i, d, md, 20000);
     state = ST_TEST;
     runTestLoop(10000);
     state = ST_IDLE;
@@ -681,7 +681,7 @@ void runBaseExit() {
   waitForMotion(); if (killed) return;
 
   // ── Turn left 90 ──
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90*1.13));
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90*1.13*0.96));
   mqtt.sendLog("exit turn left");
   waitForMotion(); if (killed) return;
 
