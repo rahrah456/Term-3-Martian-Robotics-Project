@@ -188,7 +188,7 @@ struct MotionSM {
   //   LINE_FOLLOW:    pass centroid
   //   WALL_FOLLOW:    uses udsLeftCm (side<0) or udsRightCm (side>0)
   //   CENTRE_TUNNEL:  uses udsLeftCm, udsRightCm
-  //   AVOID_OBSTACLE: uses udsLeftCm, udsRightCm, udsMidCm; phase 3 uses centroid
+  //   AVOID_OBSTACLE: uses udsLeftCm, udsRightCm, udsDistCm; phase 3 uses centroid
   //
   // Returns DONE, RUNNING, TIMEOUT, or BLOCKED.
 
@@ -334,7 +334,7 @@ struct MotionSM {
               float diff = udsLeftCm - udsRightCm;
               avoidDirection = (diff > 15.0f) ? 1 : -1;
             }
-            if (udsMidCm < 25.0f && (millis() - phaseStartMs < 2000)) {
+            if (udsDistCm < 25.0f && (millis() - phaseStartMs < 2000)) {
               setMotors(mc, avoidDirection * baseSpeed,
                             -avoidDirection * baseSpeed);
             } else {
