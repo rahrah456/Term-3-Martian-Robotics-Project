@@ -105,13 +105,10 @@ struct MotionSM {
   unsigned long holeStart = 0;
   int holdL = 0, holdR = 0;
 
-  // Avoidance sequence sub-states
-  int avoidPhase; // 0 = pick direction + spin, 1 = hug side, 2 = clear + swing, 3 = line center
-  int avoidDirection = 0; // 1 = CW (hug left), -1 = CCW (hug right)
-  int avoidClearCount;    // consecutive >35cm readings for phase 1 exit debounce
-  long avoidStartEnc;     // encoder average at avoidance start, for min spin distance
-  long avoidPhase2Enc;    // encoder snapshot for phase 2 sub-phases
-  bool avoidPhase2Swing;  // true = currently in the swing portion of phase 2
+  // Avoidance sequence sub-states (box detour)
+  int avoidPhase;   // 0..6
+  int avoidDirection = 1; // 1 = left/CCW first (fixed)
+  long avoidStartEnc;     // encoder snapshot for current spin sub-phase
   unsigned long phaseStartMs;
 
   // Turn accel tracking: set to 180000 during turns, restore to 800 after
@@ -180,11 +177,8 @@ struct MotionSM {
     phaseStartMs = millis();
     baseSpeed = speed;
     avoidPhase = 0;
-    avoidDirection = 0;  // 0 = unset, phase 0 chooses based on side UDS
-    avoidClearCount = 0;
+    avoidDirection = 1;
     avoidStartEnc = (abs(encL) + abs(encR)) / 2;
-    avoidPhase2Enc = 0;
-    avoidPhase2Swing = false;
   }
   void stop() {
     type = IDLE; result = DONE;
@@ -333,107 +327,88 @@ struct MotionSM {
         return RUNNING;
       }
 
-      // ── SENSOR-DRIVEN OBSTACLE DETOUR SEQUENCE ─────────────────
+      // ── BOX DETOUR SEQUENCE ────────────────────────────────
       case AVOID_OBSTACLE: {
+        const int BOX_SPEED = 400;
+        const long SPIN_TICKS = ticksForTurn(90);
         switch (avoidPhase) {
-          case 0: {
-            // Phase 0: pick direction based on side clearance, then spin until clear
-            if (avoidDirection == 0) {
-              float diff = udsLeftCm - udsRightCm;
-              avoidDirection = (diff > 15.0f) ? 1 : -1;
-              avoidStartEnc = (abs(encL) + abs(encR)) / 2;
-            }
-            long avgEnc = (abs(encL) + abs(encR)) / 2;
-            bool minSpinOk = (avgEnc - avoidStartEnc) >= 900;  // ~150°
-            if ((minSpinOk && udsDistCm >= 25.0f) || millis() - phaseStartMs >= 2000) {
+          case 0:
+            // Spin 90° CCW
+            if (avoidStartEnc == 0) avoidStartEnc = (abs(encL) + abs(encR)) / 2;
+            if ((abs(encL) + abs(encR)) / 2 - avoidStartEnc >= SPIN_TICKS) {
+              avoidStartEnc = 0;
               avoidPhase = 1;
               phaseStartMs = millis();
             } else {
-              setMotors(mc, avoidDirection * baseSpeed,
-                            -avoidDirection * baseSpeed);
+              setMotors(mc, avoidDirection * BOX_SPEED,
+                            -avoidDirection * BOX_SPEED);
             }
             break;
-          }
 
-          case 1: {
-            // Phase 1: Hug the correct side (avoidDirection > 0 → left, else right)
-            float sideDist = (avoidDirection > 0) ? udsLeftCm : udsRightCm;
-            if (sideDist > 35.0f) {
-              avoidClearCount++;
-              if (avoidClearCount >= 3) {
-                avoidPhase = 2;
-                phaseStartMs = millis();
-                break;
-              }
+          case 1:
+            // Forward 5s (sideways offset)
+            if (millis() - phaseStartMs >= 5000) {
+              avoidPhase = 2;
+              avoidStartEnc = (abs(encL) + abs(encR)) / 2;
             } else {
-              avoidClearCount = 0;
-            }
-
-            // Proportional control to stay exactly 15.0 cm from obstacle
-            float error = sideDist - 15.0f;
-            float kpSide = 12.0f;
-            int correction = (int)(error * kpSide);
-            int left  = constrain(baseSpeed + avoidDirection * correction,
-                                  MOTOR_MIN, MOTOR_MAX);
-            int right = constrain(baseSpeed - avoidDirection * correction,
-                                  MOTOR_MIN, MOTOR_MAX);
-            setMotors(mc, left, right);
-            break;
-          }
-
-          case 2: {
-            // Phase 2: drive past, then swing back opposite to initial turn
-            long avgEnc = (abs(encL) + abs(encR)) / 2;
-
-            if (!avoidPhase2Swing) {
-              // Forward: 80 mm to clear the rear corner
-              if (avoidPhase2Enc == 0) avoidPhase2Enc = avgEnc;
-              long fwdTicks = ticksForDistance(80);
-              if (avgEnc - avoidPhase2Enc >= fwdTicks) {
-                avoidPhase2Swing = true;
-                avoidPhase2Enc = avgEnc;
-              } else {
-                setMotors(mc, baseSpeed, baseSpeed);
-              }
-            }
-
-            if (avoidPhase2Swing) {
-              // Swing ~80° back
-              long swingTicks = ticksForTurn(80);
-              if (avgEnc - avoidPhase2Enc >= swingTicks) {
-                avoidPhase2Enc = 0;
-                avoidPhase2Swing = false;
-                avoidPhase = 3;
-                phaseStartMs = millis();
-              } else {
-                setMotors(mc, -avoidDirection * baseSpeed,
-                              avoidDirection * baseSpeed);
-              }
+              setMotors(mc, BOX_SPEED, BOX_SPEED);
             }
             break;
-          }
 
-          case 3: {
-            // Phase 3: find and center on a grid line
-            unsigned long duration = millis() - phaseStartMs;
-            if (centroid < 0) {
-              if (duration < 5000) {
-                setMotors(mc, MOTOR_MIN + 60, MOTOR_MIN + 60);
-              } else {
-                setMotors(mc, 0, 0);
-                return result = DONE;
-              }
+          case 2:
+            // Spin -90° CW (back to original heading)
+            if ((abs(encL) + abs(encR)) / 2 - avoidStartEnc >= SPIN_TICKS) {
+              avoidStartEnc = 0;
+              avoidPhase = 3;
+              phaseStartMs = millis();
             } else {
-              float error = (float)centroid - 4000.0f;
-              if (fabsf(error) < 200.0f) {
-                setMotors(mc, 0, 0);
-                return result = DONE;
-              }
-              int correction = constrain((int)(error * 0.15f), -60, 60);
-              setMotors(mc, MOTOR_MIN + 60 + correction, MOTOR_MIN + 60 - correction);
+              setMotors(mc, -avoidDirection * BOX_SPEED,
+                            avoidDirection * BOX_SPEED);
             }
             break;
-          }
+
+          case 3:
+            // Straight 10s (pass obstacle)
+            if (millis() - phaseStartMs >= 10000) {
+              avoidPhase = 4;
+              avoidStartEnc = (abs(encL) + abs(encR)) / 2;
+            } else {
+              setMotors(mc, BOX_SPEED, BOX_SPEED);
+            }
+            break;
+
+          case 4:
+            // Spin -90° CW (face right)
+            if ((abs(encL) + abs(encR)) / 2 - avoidStartEnc >= SPIN_TICKS) {
+              avoidStartEnc = 0;
+              avoidPhase = 5;
+              phaseStartMs = millis();
+            } else {
+              setMotors(mc, -avoidDirection * BOX_SPEED,
+                            avoidDirection * BOX_SPEED);
+            }
+            break;
+
+          case 5:
+            // Forward 5s (return toward original line)
+            if (millis() - phaseStartMs >= 5000) {
+              avoidPhase = 6;
+              avoidStartEnc = (abs(encL) + abs(encR)) / 2;
+            } else {
+              setMotors(mc, BOX_SPEED, BOX_SPEED);
+            }
+            break;
+
+          case 6:
+            // Spin 90° CCW (back to original heading) → DONE
+            if ((abs(encL) + abs(encR)) / 2 - avoidStartEnc >= SPIN_TICKS) {
+              setMotors(mc, 0, 0);
+              return result = DONE;
+            } else {
+              setMotors(mc, avoidDirection * BOX_SPEED,
+                            -avoidDirection * BOX_SPEED);
+            }
+            break;
         }
         return RUNNING;
       }
