@@ -21,7 +21,7 @@ import paho.mqtt.client as mqtt
 MQTT_HOST = "192.168.0.74"
 MQTT_PORT = 1883
 GROUP_ID = "3"
-ROBOT_ID = "Haunter"
+ROBOT_ID = "Haunter2"
 DASHBOARD_ID = "dash3"          # Must match DASHBOARD_ID in secrets.h
 HTTP_PORT = 8081
 
