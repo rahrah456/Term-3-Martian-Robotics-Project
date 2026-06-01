@@ -247,11 +247,7 @@ struct MotionSM {
           if (!wasHole) {
             wasHole = true; holeStart = millis();
           }
-          if (millis() - holeStart > 20000) {
-            setMotors(mc, 0, 0);
-            return result = DONE;
-          }
-          float correction = -kp * prevErr;
+          float correction = -kp * prevErr; 
           correction = constrain(correction, -(float)maxDiff, (float)maxDiff);
           int left  = constrain(baseSpeed + (int)correction, MOTOR_MIN, MOTOR_MAX);
           int right = constrain(baseSpeed - (int)correction, MOTOR_MIN, MOTOR_MAX);
