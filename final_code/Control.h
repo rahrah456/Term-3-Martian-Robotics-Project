@@ -107,7 +107,11 @@ struct MotionSM {
 
   // Avoidance sequence sub-states
   int avoidPhase; // 0 = pick direction + spin, 1 = hug side, 2 = clear + swing, 3 = line center
-  int avoidDirection; // 1 = CW (hug left), -1 = CCW (hug right)
+  int avoidDirection = 0; // 1 = CW (hug left), -1 = CCW (hug right)
+  int avoidClearCount;    // consecutive >35cm readings for phase 1 exit debounce
+  long avoidStartEnc;     // encoder average at avoidance start, for min spin distance
+  long avoidPhase2Enc;    // encoder snapshot for phase 2 sub-phases
+  bool avoidPhase2Swing;  // true = currently in the swing portion of phase 2
   unsigned long phaseStartMs;
 
   // Turn accel tracking: set to 180000 during turns, restore to 800 after
@@ -177,6 +181,10 @@ struct MotionSM {
     baseSpeed = speed;
     avoidPhase = 0;
     avoidDirection = 0;  // 0 = unset, phase 0 chooses based on side UDS
+    avoidClearCount = 0;
+    avoidStartEnc = (abs(encL) + abs(encR)) / 2;
+    avoidPhase2Enc = 0;
+    avoidPhase2Swing = false;
   }
   void stop() {
     type = IDLE; result = DONE;
@@ -333,13 +341,16 @@ struct MotionSM {
             if (avoidDirection == 0) {
               float diff = udsLeftCm - udsRightCm;
               avoidDirection = (diff > 15.0f) ? 1 : -1;
+              avoidStartEnc = (abs(encL) + abs(encR)) / 2;
             }
-            if (udsDistCm < 25.0f && (millis() - phaseStartMs < 2000)) {
-              setMotors(mc, avoidDirection * baseSpeed,
-                            -avoidDirection * baseSpeed);
-            } else {
+            long avgEnc = (abs(encL) + abs(encR)) / 2;
+            bool minSpinOk = (avgEnc - avoidStartEnc) >= 900;  // ~150°
+            if ((minSpinOk && udsDistCm >= 25.0f) || millis() - phaseStartMs >= 2000) {
               avoidPhase = 1;
               phaseStartMs = millis();
+            } else {
+              setMotors(mc, avoidDirection * baseSpeed,
+                            -avoidDirection * baseSpeed);
             }
             break;
           }
@@ -348,9 +359,14 @@ struct MotionSM {
             // Phase 1: Hug the correct side (avoidDirection > 0 → left, else right)
             float sideDist = (avoidDirection > 0) ? udsLeftCm : udsRightCm;
             if (sideDist > 35.0f) {
-              avoidPhase = 2;
-              phaseStartMs = millis();
-              break;
+              avoidClearCount++;
+              if (avoidClearCount >= 3) {
+                avoidPhase = 2;
+                phaseStartMs = millis();
+                break;
+              }
+            } else {
+              avoidClearCount = 0;
             }
 
             // Proportional control to stay exactly 15.0 cm from obstacle
@@ -367,15 +383,32 @@ struct MotionSM {
 
           case 2: {
             // Phase 2: drive past, then swing back opposite to initial turn
-            unsigned long duration = millis() - phaseStartMs;
-            if (duration < 500) {
-              setMotors(mc, baseSpeed, baseSpeed);
-            } else if (duration < 1100) {
-              setMotors(mc, -avoidDirection * baseSpeed,
-                            avoidDirection * baseSpeed);
-            } else {
-              avoidPhase = 3;
-              phaseStartMs = millis();
+            long avgEnc = (abs(encL) + abs(encR)) / 2;
+
+            if (!avoidPhase2Swing) {
+              // Forward: 80 mm to clear the rear corner
+              if (avoidPhase2Enc == 0) avoidPhase2Enc = avgEnc;
+              long fwdTicks = ticksForDistance(80);
+              if (avgEnc - avoidPhase2Enc >= fwdTicks) {
+                avoidPhase2Swing = true;
+                avoidPhase2Enc = avgEnc;
+              } else {
+                setMotors(mc, baseSpeed, baseSpeed);
+              }
+            }
+
+            if (avoidPhase2Swing) {
+              // Swing ~80° back
+              long swingTicks = ticksForTurn(80);
+              if (avgEnc - avoidPhase2Enc >= swingTicks) {
+                avoidPhase2Enc = 0;
+                avoidPhase2Swing = false;
+                avoidPhase = 3;
+                phaseStartMs = millis();
+              } else {
+                setMotors(mc, -avoidDirection * baseSpeed,
+                              avoidDirection * baseSpeed);
+              }
             }
             break;
           }
@@ -385,7 +418,7 @@ struct MotionSM {
             unsigned long duration = millis() - phaseStartMs;
             if (centroid < 0) {
               if (duration < 5000) {
-                setMotors(mc, 300, 300);
+                setMotors(mc, MOTOR_MIN + 60, MOTOR_MIN + 60);
               } else {
                 setMotors(mc, 0, 0);
                 return result = DONE;
@@ -397,7 +430,7 @@ struct MotionSM {
                 return result = DONE;
               }
               int correction = constrain((int)(error * 0.15f), -60, 60);
-              setMotors(mc, 300 + correction, 300 - correction);
+              setMotors(mc, MOTOR_MIN + 60 + correction, MOTOR_MIN + 60 - correction);
             }
             break;
           }

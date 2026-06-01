@@ -433,6 +433,11 @@ void runNavigate() {
 void runAvoid() {
   static bool started = false;
   if (!started) {
+    mqtt.sendLog("avoid: backing up");
+    motion.startStraight(-MOVE_SPEED, ticksForDistance(150));
+    while (motion.tick(mc) == MotionSM::RUNNING) {
+      mqtt.loop(); delay(20); handleEStop(); if (killed) return;
+    }
     motion.startAvoid(MOVE_SPEED);
     started = true;
   }
