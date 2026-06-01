@@ -232,15 +232,18 @@ struct MotionSM {
         if (centroid < 0) {
           if (!wasHole) {
             wasHole = true; holeStart = millis();
-            setMotors(mc, holdL, holdR);
-            return RUNNING;
           }
-          if (millis() - holeStart < 200) {
-            setMotors(mc, holdL, holdR);
-            return RUNNING;
+          if (millis() - holeStart > 4000) {
+            setMotors(mc, 0, 0);
+            return result = DONE;
           }
-          setMotors(mc, 0, 0);
-          return result = DONE;   // lost line
+          float correction = -kp * prevErr;
+          correction = constrain(correction, -(float)maxDiff, (float)maxDiff);
+          int left  = constrain(baseSpeed + (int)correction, MOTOR_MIN, MOTOR_MAX);
+          int right = constrain(baseSpeed - (int)correction, MOTOR_MIN, MOTOR_MAX);
+          holdL = left; holdR = right;
+          setMotors(mc, left, right);
+          return RUNNING;
         }
         wasHole = false;
 
@@ -255,7 +258,7 @@ struct MotionSM {
         float deriv = (error - prevErr) / dt;
         prevErr = error;
 
-        float correction = kp * error + ki * integral + kd * deriv;
+        float correction = -kp * error + ki * integral + kd * deriv;
         correction = constrain(correction, -(float)maxDiff, (float)maxDiff);
         int left  = constrain(baseSpeed + (int)correction, MOTOR_MIN, MOTOR_MAX);
         int right = constrain(baseSpeed - (int)correction, MOTOR_MIN, MOTOR_MAX);
