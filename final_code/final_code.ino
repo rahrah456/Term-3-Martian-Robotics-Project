@@ -610,28 +610,29 @@ void runBaseExit() {
   const float EXIT_LEG6_MM = 320.0f - IR_TO_FRONT_MM;   // 320 - 68 = 252mm
   const int   EXIT_TUNNEL_SPEED = 660;
 
+
   // ── Leg 1: forward ──
   motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG1_MM));
   mqtt.sendLog("exit leg 1");
   waitForMotion(); if (killed) return;
 
   // ── Turn right 90 ──
-  motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(90*0.88));
   mqtt.sendLog("exit turn right");
   waitForMotion(); if (killed) return;
 
   // ── Leg 2: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG2_MM));
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG2_MM*0.81));
   mqtt.sendLog("exit leg 2");
   waitForMotion(); if (killed) return;
 
   // ── Turn left 90 ──
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90));
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90*1.00));
   mqtt.sendLog("exit turn left");
   waitForMotion(); if (killed) return;
 
   // ── Leg 3: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG3_MM));
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG3_MM*1.00));
   mqtt.sendLog("exit leg 3");
   waitForMotion(); if (killed) return;
 
@@ -668,9 +669,13 @@ void runBaseExit() {
   // ── Ask server to exit ──
   airlockAccepted = false;
   mqtt.sendAirlockRequest("A", rfidBuf);
+  unsigned long _encLastA = micros();
+  unsigned long _checkLastA = millis();
   unsigned long waitStart = millis();
   while (millis() - waitStart < 15000) {
-    mqtt.loop(); delay(20);
+    unsigned long _nowA = micros();
+    if (_nowA - _encLastA >= 500) { _encLastA = _nowA; pollEncoders(); }
+    if (millis() - _checkLastA >= 5) { _checkLastA = millis(); mqtt.loop(); handleEStop(); if (killed) return; }
     if (airlockAccepted) break;
     if ((millis() - waitStart) > 2000 && (millis() - waitStart) % 2000 < 25)
       mqtt.sendAirlockRequest("A", rfidBuf);
@@ -679,12 +684,12 @@ void runBaseExit() {
   if (!airlockAccepted) { mqtt.sendLog("exit: airlock denied"); return; }
 
   // ── Leg 4: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG4_MM));
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG4_MM*0.76));
   mqtt.sendLog("exit leg 4");
   waitForMotion(); if (killed) return;
 
   // ── Turn left 90 ──
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90));
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90*1.13));
   mqtt.sendLog("exit turn left");
   waitForMotion(); if (killed) return;
 
@@ -694,45 +699,45 @@ void runBaseExit() {
   waitForMotion(); if (killed) return;
 
   // ── Turn right 90 ──
-  motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(90*1.06));
   mqtt.sendLog("exit turn right");
   waitForMotion(); if (killed) return;
 
   // ── Leg 6: forward (to tunnel entrance) ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG6_MM));
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG6_MM*0.7));
   mqtt.sendLog("exit leg 6");
   waitForMotion(); if (killed) return;
 
-  // ── Wait for tunnel door to open ──
-  mqtt.sendLog("exit: waiting for tunnel door");
-  delay(500);  // settle
-  // First wait for door to close (if it's already open)
+  // // ── Wait for tunnel door to open ──
+  // mqtt.sendLog("exit: waiting for tunnel door");
+  // delay(500);  // settle
+  // // First wait for door to close (if it's already open)
   unsigned long doorWait = millis();
-  bool doorClosed = false;
-  while (millis() - doorWait < 10000) {
-    mqtt.loop(); delay(20); handleEStop(); if (killed) return;
-    uds.tick();
-    filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
-    if (filteredUdsM < 30.0f) { doorClosed = true; break; }
-  }
-  if (!doorClosed) { mqtt.sendLog("exit: tunnel already open, proceeding"); }
-  else {
-    // Door is closed, wait for it to open
-    while (true) {
-      mqtt.loop(); delay(20); handleEStop(); if (killed) return;
-      uds.tick();
-      filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
-      if (filteredUdsM > 50.0f) break;
-    }
-  }
-  delay(300);
+  // bool doorClosed = false;
+  // while (millis() - doorWait < 10000) {
+  //   mqtt.loop(); delay(20); handleEStop(); if (killed) return;
+  //   uds.tick();
+  //   filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+  //   if (filteredUdsM < 30.0f) { doorClosed = true; break; }
+  // }
+  // if (!doorClosed) { mqtt.sendLog("exit: tunnel already open, proceeding"); }
+  // else {
+  //   // Door is closed, wait for it to open
+  //   while (true) {
+  //     mqtt.loop(); delay(20); handleEStop(); if (killed) return;
+  //     uds.tick();
+  //     filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+  //     if (filteredUdsM > 50.0f) break;
+  //   }
+  // }
+  delay(3000);
 
   // ── Enter tunnel: CENTRE_TUNNEL at max speed ──
   // Capture baseline pitch before slope
   float exitPitchRef = imuData.pitch;
   bool pitchChanged = false;
   mqtt.sendLog("exit: entering tunnel");
-  motion.startTunnelCentre(EXIT_TUNNEL_SPEED, 1.0f, pidMaxDiff);
+  motion.startTunnelCentre(EXIT_TUNNEL_SPEED, pidKp, pidMaxDiff);
   while (true) {
     mqtt.loop();
     if (handleEStop()) { motion.stop(); setMotors(mc, 0, 0); waitForUnkill(); return; }
@@ -748,14 +753,16 @@ void runBaseExit() {
 
     // Check front UDS for second door
     if (filteredUdsM < 30.0f) { motion.stop(); setMotors(mc, 0, 0); break; }
-    delay(20);
+    { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
   }
 
   // ── Wait for second door to open ──
   mqtt.sendLog("exit: waiting for second door");
   doorWait = millis();
+  { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
   while (millis() - doorWait < 15000) {
-    mqtt.loop(); delay(20); handleEStop(); if (killed) return;
+    unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } }
+    mqtt.loop(); handleEStop(); if (killed) return;
     uds.tick();
     filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
     if (filteredUdsM > 50.0f) break;
