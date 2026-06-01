@@ -322,7 +322,7 @@ struct MotionSM {
           { setMotors(mc, 0, 0); return result = DONE; }
 
         float error = udsLeftCm - udsRightCm;
-        float correction = kp * error;
+        float correction = -kp * error;
         correction = constrain(correction, -(float)maxDiff, (float)maxDiff);
         int left  = constrain(baseSpeed + (int)correction, MOTOR_MIN, MOTOR_MAX);
         int right = constrain(baseSpeed - (int)correction, MOTOR_MIN, MOTOR_MAX);

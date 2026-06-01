@@ -255,7 +255,7 @@ static void runTestLoop(unsigned long durationMs) {
       mqtt.sendSensorSnapshot(irVals, irCentroidVal, udsL, udsM, udsR, imuData.headingDeg, lightVal);
     }
 
-    delay(20);
+    { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
   }
   setMotors(mc, 0, 0);
   motion.stop();
@@ -319,8 +319,8 @@ void onMqttTestCommand(const String& cmd) {
     revive.start(ticksForDistance(distMm));
     state = ST_TEST;
     while (revive.tick(mc) == MotionSM::RUNNING) {
-      mqtt.loop(); delay(20);
-      pollEncoders();
+      unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } }
+      mqtt.loop();
       if (handleEStop()) { revive.stop(); setMotors(mc, 0, 0); break; }
       if (!mqtt.isEffectivelyEnabled()) { revive.stop(); setMotors(mc, 0, 0); break; }
     }
@@ -448,9 +448,7 @@ void runAvoid() {
   if (!started) {
     mqtt.sendLog("avoid: backing up");
     motion.startStraight(-MOVE_SPEED, ticksForDistance(150));
-    while (motion.tick(mc) == MotionSM::RUNNING) {
-      mqtt.loop(); delay(20); handleEStop(); if (killed) return;
-    }
+    waitForMotion(); if (killed) return;
     motion.startAvoid(MOVE_SPEED);
     started = true;
   }
@@ -520,7 +518,7 @@ void runDeposit() {
     corr = constrain(corr, -STEERING_MAX_DIFF, STEERING_MAX_DIFF);
     setMotors(mc, MOVE_SPEED + corr, MOVE_SPEED - corr);
 
-    delay(20);
+    { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
   }
 
   if (!tagFound) {
@@ -536,7 +534,8 @@ void runDeposit() {
   mqtt.sendIsFertile(rfidBuf);
   unsigned long waitStart = millis();
   while (millis() - waitStart < 10000) {
-    mqtt.loop(); delay(20);
+    { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
+    mqtt.loop();
     if (lastHoleReplyRow >= 0) break;  // got reply
     // Re-send query every 2s in case first one was dropped
     if ((millis() - waitStart) > 2000 && (millis() - waitStart) % 2000 < 25)
@@ -615,12 +614,12 @@ void runBaseExit() {
   waitForMotion(); if (killed) return;
 
   // ── Leg 2: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG2_MM*0.81));
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG2_MM*0.81*0.80));
   mqtt.sendLog("exit leg 2");
   waitForMotion(); if (killed) return;
 
   // ── Turn left 90 ──
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90*1.00));
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90*0.98*1.17*0.92));
   mqtt.sendLog("exit turn left");
   waitForMotion(); if (killed) return;
 
@@ -677,7 +676,7 @@ void runBaseExit() {
   if (!airlockAccepted) { mqtt.sendLog("exit: airlock denied"); return; }
 
   // ── Leg 4: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG4_MM*0.76));
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG4_MM*0.65));
   mqtt.sendLog("exit leg 4");
   waitForMotion(); if (killed) return;
 
@@ -687,12 +686,12 @@ void runBaseExit() {
   waitForMotion(); if (killed) return;
 
   // ── Leg 5: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG5_MM));
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG5_MM*1.00));
   mqtt.sendLog("exit leg 5");
   waitForMotion(); if (killed) return;
 
   // ── Turn right 90 ──
-  motion.startTurn(1, TURN_SPEED, ticksForTurn(90*1.06));
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(90*1.06*0.83));
   mqtt.sendLog("exit turn right");
   waitForMotion(); if (killed) return;
 
@@ -745,7 +744,7 @@ void runBaseExit() {
     if (mr != MotionSM::RUNNING) break;
 
     // Check front UDS for second door
-    if (filteredUdsM < 30.0f) { motion.stop(); setMotors(mc, 0, 0); break; }
+    if (filteredUdsM < 10.0f) { motion.stop(); setMotors(mc, 0, 0); break; }
     { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
   }
 
@@ -758,7 +757,7 @@ void runBaseExit() {
     mqtt.loop(); handleEStop(); if (killed) return;
     uds.tick();
     filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
-    if (filteredUdsM > 50.0f) break;
+    if (filteredUdsM > 17.0f) break;
   }
 
   // ── Continue forward until gravity normalises ──
@@ -766,10 +765,11 @@ void runBaseExit() {
   setMotors(mc, EXIT_TUNNEL_SPEED, EXIT_TUNNEL_SPEED);
   unsigned long pitchStart = millis();
   while (millis() - pitchStart < 30000) {
-    mqtt.loop(); delay(20);
+    unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } }
+    mqtt.loop();
     if (handleEStop()) { setMotors(mc, 0, 0); waitForUnkill(); return; }
-    pollEncoders();
     if (imuData.ok) readIMU(imuData);
+    if (!mqtt.isEffectivelyEnabled()) { setMotors(mc, 0, 0); return; }
 
     float pitchDiff = fabsf(imuData.pitch - exitPitchRef);
     if (pitchDiff > 8.0f) pitchChanged = true;
@@ -801,7 +801,10 @@ static bool driveSegment(float heading, long targetTicks, bool useLineFollow,
       unsigned long t0 = millis();
       lastHoleReplyRow = -1;
       while (millis() - t0 < 5000) {
-        mqtt.loop(); delay(20);
+        unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } }
+        mqtt.loop();
+        handleEStop(); if (killed) { setMotors(mc, 0, 0); return false; }
+        if (!mqtt.isEffectivelyEnabled()) { setMotors(mc, 0, 0); return false; }
         if (lastHoleReplyRow >= 0) break;
       }
       if (lastHoleReplyRow >= 0) {
@@ -826,7 +829,7 @@ static bool driveSegment(float heading, long targetTicks, bool useLineFollow,
     }
     corr = constrain(corr, -STEERING_MAX_DIFF, STEERING_MAX_DIFF);
     setMotors(mc, MOVE_SPEED + corr, MOVE_SPEED - corr);
-    delay(20);
+    { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
   }
   return false;
 }
@@ -839,8 +842,10 @@ static void backtrack50() {
     pollEncoders();
     if ((abs(encL) + abs(encR)) / 2 - start >= target) break;
     setMotors(mc, -300, -300);
-    mqtt.loop(); delay(20);
+    unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } }
+    mqtt.loop();
     if (handleEStop()) { setMotors(mc, 0, 0); return; }
+    if (!mqtt.isEffectivelyEnabled()) { setMotors(mc, 0, 0); return; }
   }
   setMotors(mc, 0, 0);
   delay(200);
