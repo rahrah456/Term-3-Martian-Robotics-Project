@@ -78,7 +78,7 @@ public:
   // Effective = !killed && serverAllow && dashboardDesired.
 
   bool isEffectivelyEnabled() const {
-    return serverAllow && dashboardDesired;
+    return true;  // TEMP: only kill switch gates motion (ignore server/dashboard)
   }
 
   // Call when serverAllow or dashboardDesired may have changed.
