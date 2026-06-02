@@ -288,8 +288,10 @@ void onMqttTestCommand(const String& cmd) {
     mqtt.sendLog("wall follow done");
   }
   else if (cmd.startsWith("OBSTACLE_AVOIDANCE")) {
-    mqtt.sendLog("Testing sensor-driven detour...");
-    motion.startAvoid(MOVE_SPEED);
+    mqtt.sendLog("Testing obstacle avoidance detour...");
+    state = ST_AVOID;
+    runAvoid();
+    state = ST_IDLE;
   }
   else if (cmd == "DEPOSIT") {
     // Read fresh sensors — callback runs from mqtt.loop() context
