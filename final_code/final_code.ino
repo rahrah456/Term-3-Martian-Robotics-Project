@@ -457,7 +457,7 @@ void runAvoid() {
 }
 
 // ── Deposit Sequence ────────────────────────────────────────
-void  () {
+void runDeposit() {
   mqtt.sendState("DEPOSIT");
 
   // ── 1. Round heading to nearest cardinal direction ────────
