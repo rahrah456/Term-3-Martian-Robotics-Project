@@ -441,23 +441,49 @@ void runNavigate() {
   }
 }
 
-// ── Obstacle Avoidance (uses AVOID_OBSTACLE, sensor-driven) ─
-// Started once on entering ST_AVOID; the main loop ticks
-// MotionSM until completion, then transitions to ST_PLAN.
+// ── Obstacle Avoidance (blocking, like runBaseExit) ─────────
+// Backs up 1 node, then boxes around: turn right, forward 1,
+// turn left, forward 3, turn left, forward 1, turn right, forward 1.
 
 void runAvoid() {
-  static bool started = false;
-  if (!started) {
-    mqtt.sendLog("avoid: backing up");
-    motion.startStraight(-MOVE_SPEED, ticksForDistance(150));
-    waitForMotion(); if (killed) return;
-    motion.startAvoid(MOVE_SPEED);
-    started = true;
-  }
-  if (motion.type == MotionSM::IDLE) {
-    started = false;
-    state = ST_PLAN;
-  }
+  mqtt.sendLog("avoid: backing up");
+  motion.startStraight(-MOVE_SPEED, ticksForDistance(HOLE_SPACING_MM));
+  waitForMotion(); if (killed) return;
+
+  mqtt.sendLog("avoid: turn right");
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
+  waitForMotion(); if (killed) return;
+
+  mqtt.sendLog("avoid: forward 1");
+  motion.startStraight(MOVE_SPEED, ticksForDistance(HOLE_SPACING_MM));
+  waitForMotion(); if (killed) return;
+
+  mqtt.sendLog("avoid: turn left");
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90));
+  waitForMotion(); if (killed) return;
+
+  mqtt.sendLog("avoid: forward 3");
+  motion.startStraight(MOVE_SPEED, ticksForDistance(HOLE_SPACING_MM * 3));
+  waitForMotion(); if (killed) return;
+
+  mqtt.sendLog("avoid: turn left");
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90));
+  waitForMotion(); if (killed) return;
+
+  mqtt.sendLog("avoid: forward 1");
+  motion.startStraight(MOVE_SPEED, ticksForDistance(HOLE_SPACING_MM));
+  waitForMotion(); if (killed) return;
+
+  mqtt.sendLog("avoid: turn right");
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
+  waitForMotion(); if (killed) return;
+
+  mqtt.sendLog("avoid: forward 1");
+  motion.startStraight(MOVE_SPEED, ticksForDistance(HOLE_SPACING_MM));
+  waitForMotion(); if (killed) return;
+
+  mqtt.sendLog("avoid: detour complete");
+  state = ST_PLAN;
 }
 
 // ── Deposit Sequence ────────────────────────────────────────
@@ -1119,7 +1145,7 @@ void loop() {
       case ST_IDLE:        runIdle();        break;
       case ST_PLAN:        runPlan();        break;
       case ST_NAVIGATE:    runNavigate();    break;
-      case ST_AVOID:       runAvoid();       break;  // calls startAvoid once, transitions to ST_PLAN on completion
+      case ST_AVOID:       runAvoid();       break;
       case ST_DEPOSIT:     runDeposit();     break;
       case ST_RETURN_BASE: runReturnBase();  break;
       case ST_EXIT_BASE:   runBaseExit();    break;

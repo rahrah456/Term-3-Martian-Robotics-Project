@@ -62,7 +62,7 @@ const int   UDS_TIMEOUT_US = 8000;    // pulseIn timeout per sensor (µs, ≈138
 const int   UDS_MAX_CM     = 500;
 
 // Stopping distance for obstacle avoidance (mm)
-const int OBSTACLE_STOP_MM = 300;
+const int OBSTACLE_STOP_MM = 70;   // 7cm — detect obstacle in next node
 
 // ── Servo (Seed Dispenser) ──────────────────────────────────
 const int PIN_SERVO = 31;

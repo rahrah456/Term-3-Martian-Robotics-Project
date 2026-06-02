@@ -73,7 +73,7 @@ struct PIDSpeed {
 
 struct MotionSM {
   enum Result { DONE = 0, RUNNING = -1, TIMEOUT = 1, BLOCKED = 2 };
-  enum Type { IDLE, STRAIGHT, TURN, LINE_FOLLOW, WALL_FOLLOW, CENTRE_TUNNEL, AVOID_OBSTACLE };
+  enum Type { IDLE, STRAIGHT, TURN, LINE_FOLLOW, WALL_FOLLOW, CENTRE_TUNNEL };
 
   Type type = IDLE;
   int result = DONE;
@@ -104,12 +104,6 @@ struct MotionSM {
   bool wasHole = false;
   unsigned long holeStart = 0;
   int holdL = 0, holdR = 0;
-
-  // Avoidance sequence sub-states (box detour)
-  int avoidPhase;   // 0..6
-  int avoidDirection = 1; // 1 = left/CCW first (fixed)
-  long avoidStartEnc;     // encoder snapshot for current spin sub-phase
-  unsigned long phaseStartMs;
 
   // Turn accel tracking: set to 180000 during turns, restore to 800 after
   bool turnAccelSet = false;
@@ -170,16 +164,6 @@ struct MotionSM {
     result = RUNNING;
   }
 
-  void startAvoid(int speed) {
-    type = AVOID_OBSTACLE;
-    result = RUNNING;
-    startMs = millis();
-    phaseStartMs = millis();
-    baseSpeed = speed;
-    avoidPhase = 0;
-    avoidDirection = 1;
-    avoidStartEnc = (abs(encL) + abs(encR)) / 2;
-  }
   void stop() {
     type = IDLE; result = DONE;
   }
@@ -320,92 +304,6 @@ struct MotionSM {
         int left  = constrain(baseSpeed + (int)correction, MOTOR_MIN, MOTOR_MAX);
         int right = constrain(baseSpeed - (int)correction, MOTOR_MIN, MOTOR_MAX);
         setMotors(mc, left, right);
-        return RUNNING;
-      }
-
-      // ── BOX DETOUR SEQUENCE ────────────────────────────────
-      case AVOID_OBSTACLE: {
-        const int BOX_SPEED = 400;
-        const long SPIN_TICKS = ticksForTurn(90);
-        switch (avoidPhase) {
-          case 0:
-            // Spin 90° CCW
-            if (avoidStartEnc == 0) avoidStartEnc = (abs(encL) + abs(encR)) / 2;
-            if ((abs(encL) + abs(encR)) / 2 - avoidStartEnc >= SPIN_TICKS) {
-              avoidStartEnc = 0;
-              avoidPhase = 1;
-              phaseStartMs = millis();
-            } else {
-              setMotors(mc, avoidDirection * BOX_SPEED,
-                            -avoidDirection * BOX_SPEED);
-            }
-            break;
-
-          case 1:
-            // Forward 5s (sideways offset)
-            if (millis() - phaseStartMs >= 5000) {
-              avoidPhase = 2;
-              avoidStartEnc = (abs(encL) + abs(encR)) / 2;
-            } else {
-              setMotors(mc, BOX_SPEED, BOX_SPEED);
-            }
-            break;
-
-          case 2:
-            // Spin -90° CW (back to original heading)
-            if ((abs(encL) + abs(encR)) / 2 - avoidStartEnc >= SPIN_TICKS) {
-              avoidStartEnc = 0;
-              avoidPhase = 3;
-              phaseStartMs = millis();
-            } else {
-              setMotors(mc, -avoidDirection * BOX_SPEED,
-                            avoidDirection * BOX_SPEED);
-            }
-            break;
-
-          case 3:
-            // Straight 10s (pass obstacle)
-            if (millis() - phaseStartMs >= 10000) {
-              avoidPhase = 4;
-              avoidStartEnc = (abs(encL) + abs(encR)) / 2;
-            } else {
-              setMotors(mc, BOX_SPEED, BOX_SPEED);
-            }
-            break;
-
-          case 4:
-            // Spin -90° CW (face right)
-            if ((abs(encL) + abs(encR)) / 2 - avoidStartEnc >= SPIN_TICKS) {
-              avoidStartEnc = 0;
-              avoidPhase = 5;
-              phaseStartMs = millis();
-            } else {
-              setMotors(mc, -avoidDirection * BOX_SPEED,
-                            avoidDirection * BOX_SPEED);
-            }
-            break;
-
-          case 5:
-            // Forward 5s (return toward original line)
-            if (millis() - phaseStartMs >= 5000) {
-              avoidPhase = 6;
-              avoidStartEnc = (abs(encL) + abs(encR)) / 2;
-            } else {
-              setMotors(mc, BOX_SPEED, BOX_SPEED);
-            }
-            break;
-
-          case 6:
-            // Spin 90° CCW (back to original heading) → DONE
-            if ((abs(encL) + abs(encR)) / 2 - avoidStartEnc >= SPIN_TICKS) {
-              setMotors(mc, 0, 0);
-              return result = DONE;
-            } else {
-              setMotors(mc, avoidDirection * BOX_SPEED,
-                            -avoidDirection * BOX_SPEED);
-            }
-            break;
-        }
         return RUNNING;
       }
 
