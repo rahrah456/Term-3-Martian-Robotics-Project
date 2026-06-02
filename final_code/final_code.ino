@@ -81,6 +81,18 @@ const char* stateNames[] = {
 
 State state = ST_INIT;
 
+// ── Turn multiplier overrides (tuneable from dashboard) ────
+#define MAX_TURN_MULTS 8
+float g_turnMults[MAX_TURN_MULTS] = {1,1,1,1,1,1,1,1};
+int g_turnMultCount = 0;
+int g_turnMultIdx = 0;
+
+static void resetTurnMults() { g_turnMultIdx = 0; }
+static float nextTurnMult() {
+  if (g_turnMultIdx < g_turnMultCount) return g_turnMults[g_turnMultIdx++];
+  return 1.0f;
+}
+
 bool handleEStop() {
   static bool lastBtn = HIGH;
   static unsigned long debounce = 0;
@@ -363,6 +375,18 @@ void onMqttTestCommand(const String& cmd) {
     state = ST_IDLE;
     mqtt.sendLog("grid nav nolines done");
   }
+  else if (cmd.startsWith("OVERRIDE_TURN_MULTS:")) {
+    const char* p = cmd.c_str() + 20;  // skip "OVERRIDE_TURN_MULTS:"
+    g_turnMultCount = 0;
+    char buf[128]; strncpy(buf, p, sizeof(buf)-1); buf[sizeof(buf)-1] = 0;
+    char* tok = strtok(buf, ",");
+    while (tok && g_turnMultCount < MAX_TURN_MULTS) {
+      g_turnMults[g_turnMultCount++] = (float)atof(tok);
+      tok = strtok(NULL, ",");
+    }
+    char lb[64]; snprintf(lb, sizeof(lb), "turn mults: %d values", g_turnMultCount);
+    mqtt.sendLog(lb);
+  }
 }
 
 // ============================================================
@@ -460,8 +484,9 @@ void runNavigate() {
 // turn left, forward 1, turn right, forward 1.
 
 void runAvoid() {
+  resetTurnMults();
   mqtt.sendLog("avoid: turn right");
-  motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
+  motion.startTurn(1, TURN_SPEED, ticksForTurn((long)(90.0f * nextTurnMult())));
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: forward 1");
@@ -469,7 +494,7 @@ void runAvoid() {
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: turn left");
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90));
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * nextTurnMult())));
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: forward 3");
@@ -477,7 +502,7 @@ void runAvoid() {
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: turn left");
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90));
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * nextTurnMult())));
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: forward 1");
@@ -485,7 +510,7 @@ void runAvoid() {
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: turn right");
-  motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
+  motion.startTurn(1, TURN_SPEED, ticksForTurn((long)(90.0f * nextTurnMult())));
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: forward 1");
@@ -886,6 +911,7 @@ static bool moveAndSnap(float distMm, float& heading, bool useLineFollow,
 
 static void runNodePath(bool useLineFollow) {
   mqtt.sendLog(useLineFollow ? "grid nav start" : "dead reckon start");
+  if (!useLineFollow) resetTurnMults();
 
   auto driveNode = [&]() {
     if (useLineFollow) {
@@ -903,7 +929,7 @@ static void runNodePath(bool useLineFollow) {
   if (killed) return;
 
   // Turn right 90
-  motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
+  motion.startTurn(1, TURN_SPEED, ticksForTurn((long)(90.0f * nextTurnMult())));
   waitForMotion(); if (killed) return;
   delay(200);
 
@@ -912,7 +938,7 @@ static void runNodePath(bool useLineFollow) {
   if (killed) return;
 
   // Turn left 90
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90));
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * nextTurnMult())));
   waitForMotion(); if (killed) return;
   delay(200);
 
