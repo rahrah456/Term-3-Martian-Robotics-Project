@@ -864,13 +864,28 @@ void runBaseExitLineFollow() {
   const int   TURN_SENSOR_CNT = 5;
   int         intCount        = 0;    // persistence: same type on 2 calls
 
+  // Per-sensor EMA on filtered IR values
+  EMA         irEMAs[IR_COUNT];
+  float       irFilt[IR_COUNT];
+
+  auto readFilteredIR = [&]() -> int {
+    readIR(irVals);
+    int sum = 0, weighted = 0;
+    for (int i = 0; i < IR_COUNT; i++) {
+      irFilt[i] = irEMAs[i].update((float)irVals[i]);
+      if (irFilt[i] > 50) { sum += (int)irFilt[i]; weighted += (int)irFilt[i] * i * 1000; }
+    }
+    if (sum < 100) return -1;
+    return weighted / sum;
+  };
+
   // Intersection types: 0=none, -1=left, 1=right, 2=T
   auto intersectionType = [&]() -> int {
-    readIR(irVals);
+    readFilteredIR();
     int l = 0, c = 0, r = 0;
-    for (int i = 0; i < 3; i++) if (irVals[i] > IR_THRESH) l++;
-    for (int i = 3; i < 6; i++) if (irVals[i] > IR_THRESH) c++;
-    for (int i = 6; i < 9; i++) if (irVals[i] > IR_THRESH) r++;
+    for (int i = 0; i < 3; i++) if (irFilt[i] > IR_THRESH) l++;
+    for (int i = 3; i < 6; i++) if (irFilt[i] > IR_THRESH) c++;
+    for (int i = 6; i < 9; i++) if (irFilt[i] > IR_THRESH) r++;
     int t = l + c + r;
     int type = 0;
     if (t >= T_SENSOR_CNT && l >= 2 && c >= 2 && r >= 2) type = 2;
@@ -886,16 +901,14 @@ void runBaseExitLineFollow() {
   // Creep forward one step: read centroid before/after to get drift,
   // then turn on the spot to correct heading + a bit of position error.
   auto creepStep = [&]() -> bool {
-    readIR(irVals);
-    int cBefore = irCentroid(irVals);
+    int cBefore = readFilteredIR();
 
     motion.startStraight(CREEP_SPEED, STEP_TICKS);
     waitForMotion(); if (killed) return false;
 
     delay(80);  // settle so robot is fully stopped before turning
 
-    readIR(irVals);
-    int cAfter = irCentroid(irVals);
+    int cAfter = readFilteredIR();
 
     if (cAfter >= 0) {
       int drift  = (cBefore >= 0) ? (cAfter - cBefore) : 0;
@@ -911,7 +924,8 @@ void runBaseExitLineFollow() {
     }
 
     // Publish sensor snapshot so dashboard stays live during blocking
-    irCentroidVal = irCentroid(irVals);
+    irCentroidVal = cAfter;
+    for (int i = 0; i < IR_COUNT; i++) irVals[i] = (uint16_t)irFilt[i];
     uds.tick();
     filteredUdsL = udsLFilter.update((float)uds.distances[UDSManager::LEFT]);
     filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
