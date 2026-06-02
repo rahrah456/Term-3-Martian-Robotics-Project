@@ -579,7 +579,6 @@ void runDeposit() {
   waitForMotion();
   motion.startStraight(-wiggleSpeed, ticksForDistance(30));
   waitForMotion();
-  lockSeeds(servo);
 
   // ── 7. Mark planted ───────────────────────────────────────
   holePlanted[holeRow][holeCol] = true;
