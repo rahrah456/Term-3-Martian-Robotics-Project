@@ -773,7 +773,7 @@ void runBaseExit() {
   unsigned long doorWait = millis();
   // bool doorClosed = false;
   // while (millis() - doorWait < 10000) {
-  //   mqtt.loop(); delay(20); handleEStop(); if (killed) return;
+  //   mqtt.loop(); #20); handleEStop(); if (killed) return;
   //   uds.tick();
   //   filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
   //   if (filteredUdsM < 30.0f) { doorClosed = true; break; }
@@ -857,7 +857,8 @@ void runBaseExitLineFollow() {
   const int   CREEP_SPEED     = 400;
   const long  STEP_TICKS      = ticksForDistance(100.0f);
   const int   CORR_SPEED      = 300;
-  const float CORR_GAIN       = 8.0f;
+  const float DRIFT_GAIN      = 10.0f;   // deg per unit drift (heading error)
+  const float POS_GAIN        = 3.0f;    // deg per unit offset (position error)
   const int   IR_THRESH       = 200;
   const int   T_SENSOR_CNT    = 7;
   const int   TURN_SENSOR_CNT = 5;
@@ -876,17 +877,29 @@ void runBaseExitLineFollow() {
     return 0;
   };
 
-  // Creep forward one step, then correct heading based on centroid
+  // Creep forward one step: read centroid before/after to get drift,
+  // then turn on the spot to correct heading + a bit of position error.
   auto creepStep = [&]() -> bool {
+    readIR(irVals);
+    int cBefore = irCentroid(irVals);
+
     motion.startStraight(CREEP_SPEED, STEP_TICKS);
     waitForMotion(); if (killed) return false;
+
+    delay(80);  // settle so robot is fully stopped before turning
+
     readIR(irVals);
-    int c = irCentroid(irVals);
-    if (c >= 0) {
-      float err = (c - 4000.0f) / 4000.0f;
-      float ang = fabs(err) * CORR_GAIN;
+    int cAfter = irCentroid(irVals);
+
+    if (cAfter >= 0) {
+      int drift  = (cBefore >= 0) ? (cAfter - cBefore) : 0;
+      int posErr = cAfter - 4000;
+
+      float weighted = (float)drift / 4000.0f * DRIFT_GAIN
+                     + (float)posErr / 4000.0f * POS_GAIN;
+      float ang = fabs(weighted);
       if (ang >= 2.0f) {
-        motion.startTurn(err > 0 ? 1 : -1, CORR_SPEED, ticksForTurn(ang));
+        motion.startTurn(weighted > 0 ? 1 : -1, CORR_SPEED, ticksForTurn(ang));
         waitForMotion(); if (killed) return false;
       }
     }
