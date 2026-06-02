@@ -102,14 +102,15 @@ void waitForUnkill() {
 int waitForMotion() {
   unsigned long _mqttDead = millis() + 5;
   unsigned long _encLast = micros();
+  int _ticks = 0;
   while (true) {
     unsigned long _now = micros();
-    if (_now - _encLast >= 500) { _encLast = _now; pollEncoders(); }
+    if (_now - _encLast >= 500) { _encLast = _now; pollEncoders(); _ticks++; }
     if ((long)(millis() - _mqttDead) >= 0) { mqtt.loop(); _mqttDead = millis() + 5; }
     int mr = motion.tick(mc);
-    if (mr != MotionSM::RUNNING) return mr;
-    handleEStop(); if (killed) { motion.stop(); setMotors(mc, 0, 0); return MotionSM::DONE; }
-    if (!mqtt.isEffectivelyEnabled()) { motion.stop(); setMotors(mc, 0, 0); return MotionSM::DONE; }
+    if (mr != MotionSM::RUNNING) { Serial.print("waitForMotion: tick returned "); Serial.println(mr); return mr; }
+    handleEStop(); if (killed) { Serial.println("waitForMotion: killed"); motion.stop(); setMotors(mc, 0, 0); return MotionSM::DONE; }
+    if (!mqtt.isEffectivelyEnabled()) { Serial.println("waitForMotion: disabled"); motion.stop(); setMotors(mc, 0, 0); return MotionSM::DONE; }
   }
 }
 
@@ -459,7 +460,7 @@ void runAvoid() {
 }
 
 // ── Deposit Sequence ────────────────────────────────────────
-void runDeposit() {
+void  () {
   mqtt.sendState("DEPOSIT");
 
   // ── 1. Round heading to nearest cardinal direction ────────
@@ -789,6 +790,7 @@ static bool driveSegment(float heading, long targetTicks, bool useLineFollow,
   while (millis() < deadline) {
     mqtt.loop();
     if (handleEStop()) { setMotors(mc, 0, 0); return false; }
+    if (!mqtt.isEffectivelyEnabled()) { setMotors(mc, 0, 0); Serial.println("driveSegment: disabled"); return false; }
     pollEncoders();
     readIR(irVals);
     irCentroidVal = irCentroid(irVals);
@@ -816,7 +818,7 @@ static bool driveSegment(float heading, long targetTicks, bool useLineFollow,
     }
 
     long avgEnc = (abs(encL) + abs(encR)) / 2;
-    if (avgEnc - startEnc >= targetTicks) { setMotors(mc, 0, 0); return false; }
+    if (avgEnc - startEnc >= targetTicks) { setMotors(mc, 0, 0); Serial.print("driveSegment: target ticks "); Serial.println(targetTicks); return false; }
 
     float hErr = heading - imuData.headingDeg;
     if (hErr > 180.0f) hErr -= 360.0f;

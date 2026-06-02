@@ -109,9 +109,10 @@ public:
 
     // Heartbeat watchdog: auto-disallow if no heartbeat for 1s
     // Only fires after server has contacted us at least once.
-    if (serverEverContacted && millis() - lastHeartbeatMs > 1000u) {
+    if (serverEverContacted && millis() - lastHeartbeatMs > 5000u) {
       serverAllow = false;
       Serial.println("MQTT: heartbeat timeout — server disallow");
+      sendLog("heartbeat timeout");
       applyState();
     }
 
