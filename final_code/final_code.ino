@@ -293,6 +293,18 @@ void onMqttTestCommand(const String& cmd) {
     runAvoid();
     state = ST_IDLE;
   }
+  else if (cmd.startsWith("MOVE_TURN")) {
+    int mm = 250, deg = 0;
+    sscanf(cmd.c_str(), "MOVE_TURN:%d,%d", &mm, &deg);
+    mqtt.sendLog(String("move_turn: ") + mm + "mm, " + deg + "deg");
+    motion.startStraight(MOVE_SPEED, ticksForDistance(mm));
+    waitForMotion(); if (killed) return;
+    if (deg != 0) {
+      motion.startTurn(deg > 0 ? 1 : -1, TURN_SPEED, ticksForTurn(abs(deg)));
+      waitForMotion(); if (killed) return;
+    }
+    mqtt.sendLog("move_turn: done");
+  }
   else if (cmd == "DEPOSIT") {
     // Read fresh sensors — callback runs from mqtt.loop() context
     readIR(irVals);

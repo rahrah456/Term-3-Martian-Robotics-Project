@@ -355,6 +355,9 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:GRID_NAV')">Grid Nav</button>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:GRID_NAV_NOLINES')">Grid Nav (no lines)</button>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:OBSTACLE_AVOIDANCE')">Obstacle Avoidance</button>
+      <input id="moveMm" value="250" class="num" style="width:60px" placeholder="mm">
+      <input id="turnDeg" value="90" class="num" style="width:50px" placeholder="°">
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:MOVE_TURN:'+document.getElementById('moveMm').value+','+document.getElementById('turnDeg').value)">Move+Turn</button>
     </div>
   </div>
 
