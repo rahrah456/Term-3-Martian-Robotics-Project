@@ -94,6 +94,7 @@ Position is dead-reckoned from encoder deltas projected along the IMU heading. A
 ### Motion
 
 All motion is **non-blocking**. `MotionSM` is a struct with a `tick()` method that advances one step per call. Supported motion types:
+
 - `STRAIGHT` / `TURN` -- open-loop, encoder-counted
 - `LINE_FOLLOW` -- PID on IR centroid (with hole-crossing hold)
 - `WALL_FOLLOW` -- proportional control on side UDS (configurable side + target distance)
@@ -119,6 +120,7 @@ The main loop runs a simple state machine:
 ### Communication
 
 MQTT over WiFi using the **MiniMessenger** library. The robot:
+
 - **Publishes** (at 5 Hz): pose, state, sensor snapshot (16 fields incl. seed index), hole status
 - **Subscribes**: ENABLE/DISABLE, heartbeat (server watchdog ~1 s timeout), emergency, PID tuning (`kp`, `ki`, `kd`, `md`), test commands (`FOLLOW_LINE`, `FOLLOW_WALL`, `OBSTACLE_AVOIDANCE`, `DEPOSIT`, `EXIT_BASE`, `REVIVE`, `GRID_NAV`, `GRID_NAV_NOLINES`), heading reset (`HEADING:0`), seed select (`SEED:1`-`SEED:5`)
 
@@ -494,18 +496,24 @@ flowchart LR
 
 The robot requires calibration of its encoder-based motion to achieve accurate dead-reckoning.
 
+
+
+### Motor power bias
+
+
+
 ### Move Calibration
 
 This plots measured distance against encoder ticks for forward movement trials, showing the linear and exponential components of the fitted curve.
 
-![Move calibration](README_resources/move_calib)
+![Move calibration](README_resources/move_calib.png)
 
 ### Turn Calibration
 
 This plots measured rotation angle against encoder ticks for turning trials, showing the linear fit used by `ticksForTurn()`.
 
-![Turn calibration](README_resources/turn_calib)
+![Turn calibration](README_resources/turn_calib.png)
 
-### TODO
+#### Methodology
 
-(Fill in calibration methodology, fitted parameters, raw data tables, and re-calibration instructions.)
+(To be filled in)
