@@ -244,9 +244,11 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .btn-danger { background: var(--red); color: #fff; }
   .btn-small { min-height: 28px; padding: 0 10px; font-size: 12px; }
   .map-box { position: relative; width: 100%; aspect-ratio: 1; background: #fbfcfd; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-  .ir-bar { display: flex; gap: 2px; height: 48px; align-items: flex-end; margin: 8px 0; }
-  .ir-seg { flex: 1; background: var(--blue); min-height: 2px; border-radius: 2px 2px 0 0; transition: height 0.15s; opacity: 0.7; }
+  .ir-bar { display: flex; gap: 2px; height: 68px; margin: 8px 0; align-items: flex-end; }
+  .ir-seg-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; }
+  .ir-seg { width: 100%; background: var(--blue); min-height: 2px; border-radius: 2px 2px 0 0; transition: height 0.15s; opacity: 0.7; }
   .ir-seg.active { background: var(--green); opacity: 1; }
+  .ir-val { font-size: 9px; color: var(--muted); margin-top: 2px; line-height: 1; white-space: nowrap; }
   .log-box { height: 150px; overflow-y: auto; font-family: "Cascadia Code", "Fira Code", "Consolas", monospace; font-size: 12px; color: var(--muted); background: #fbfcfd; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
   .ctrl-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
   .ctrl-row input[type="text"] { flex: 1; min-width: 120px; border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; background: var(--surface-strong); font: inherit; font-size: 13px; color: var(--ink); }
@@ -323,6 +325,41 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <div id="holeGrid" class="hole-grid"></div>
   </div>
 
+  <!-- Motor Test -->
+  <div class="card full">
+    <h2>Motor Test</h2>
+    <div class="ctrl-row">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;width:100%;">
+        <div style="flex:1;min-width:170px;">
+          <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;">Left Track</div>
+          <div style="display:flex;gap:4px;margin-bottom:4px;">
+            <button class="btn btn-small btn-primary" style="flex:1" onclick="sendCmd('MOTOR:L,'+leftSpeed.value+','+motorDur.value)">FWD</button>
+            <button class="btn btn-small btn-secondary" style="flex:1" onclick="sendCmd('MOTOR:L,-'+leftSpeed.value+','+motorDur.value)">REV</button>
+          </div>
+          <input id="leftSpeed" value="500" class="num" style="width:100%" placeholder="speed 250-660">
+        </div>
+        <div style="flex:1;min-width:170px;">
+          <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;">Right Track</div>
+          <div style="display:flex;gap:4px;margin-bottom:4px;">
+            <button class="btn btn-small btn-primary" style="flex:1" onclick="sendCmd('MOTOR:R,'+rightSpeed.value+','+motorDur.value)">FWD</button>
+            <button class="btn btn-small btn-secondary" style="flex:1" onclick="sendCmd('MOTOR:R,-'+rightSpeed.value+','+motorDur.value)">REV</button>
+          </div>
+          <input id="rightSpeed" value="500" class="num" style="width:100%" placeholder="speed 250-660">
+        </div>
+      </div>
+    </div>
+    <div class="ctrl-row">
+      <label>Duration:</label>
+      <input id="motorDur" value="2000" class="num" style="width:70px" placeholder="ms">
+      <span style="font-size:11px;color:var(--muted);">ms (0 = hold)</span>
+    </div>
+    <div class="ctrl-row">
+      <button class="btn btn-small btn-primary" onclick="sendCmd('MOTOR:BOTH,'+leftSpeed.value+','+rightSpeed.value+','+motorDur.value)">Both FWD</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('MOTOR:BOTH,-'+leftSpeed.value+','+'-'+rightSpeed.value+','+motorDur.value)">Both REV</button>
+      <button class="btn btn-small btn-danger" onclick="sendCmd('MOTOR:STOP')">&cross; STOP ALL</button>
+    </div>
+  </div>
+
   <!-- PID Tuning -->
   <div class="card full">
     <h2>PID Tuning &amp; Tests</h2>
@@ -335,6 +372,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <div class="cheatsheet" id="cheat">
       <b>Console commands:</b><br>
       ENABLE &nbsp; DISABLE &nbsp; DEPOSIT &nbsp; EXIT_BASE<br>
+      MOTOR:L,&lt;speed&gt;,&lt;ms&gt; &nbsp; MOTOR:R,&lt;speed&gt;,&lt;ms&gt;<br>
+      MOTOR:BOTH,&lt;speed&gt;,&lt;ms&gt; &nbsp; MOTOR:STOP<br>
       TEST:FOLLOW_LINE:&lt;base&gt;,&lt;kp&gt;,&lt;ki&gt;,&lt;kd&gt;,&lt;md&gt;<br>
       TEST:FOLLOW_WALL:&lt;base&gt;,&lt;side&gt;,&lt;targetCm&gt;,&lt;kp&gt;,&lt;ki&gt;,&lt;kd&gt;,&lt;md&gt;<br>
       &lt;key&gt;:&lt;val&gt; &nbsp; (kp, ki, kd, md)
@@ -359,8 +398,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <input id="turnDeg" value="90" class="num" style="width:50px" placeholder="°">
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:MOVE_TURN:'+document.getElementById('moveMm').value+','+document.getElementById('turnDeg').value)">Move+Turn</button>
       <span style="font-size:12px;color:var(--muted);font-weight:500;">Turn mults:</span>
-      <input id="avoidMults" value="1.0,1.0,1.0,1.0" class="num" style="width:100px" placeholder="avoid">
-      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:OVERRIDE_AVOID_TURNS:'+document.getElementById('avoidMults').value)">Set Avoid</button>
       <input id="gridMults" value="1.0,1.0" class="num" style="width:100px" placeholder="grid">
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:OVERRIDE_GRID_TURNS:'+document.getElementById('gridMults').value)">Set Grid</button>
     </div>
@@ -459,30 +496,38 @@ function update(d) {
   document.getElementById('centroid').textContent = d.centroid;
   document.getElementById('uds').textContent = d.uds.join(' / ') + ' cm';
 
-  // IR bar
+  // IR bar (mirrored — S8 on left, S0 on right)
   const bar = document.getElementById('irBar');
   const wrapper = bar.parentElement;
   bar.innerHTML = '';
   const vals = d.ir || [];
   let maxV = -1, maxI = -1;
-  for (let i = 0; i < 9; i++) {
+  for (let i = 8; i >= 0; i--) {
     let v = vals[i] || 0;
     if (v > maxV) { maxV = v; maxI = i; }
+    const wrap = document.createElement('div');
+    wrap.className = 'ir-seg-wrap';
     const seg = document.createElement('div');
     seg.className = 'ir-seg';
     seg.style.height = Math.max(4, (v / 1000) * 100) + '%';
     seg.title = 'S' + i + ': ' + v;
-    bar.appendChild(seg);
+    wrap.appendChild(seg);
+    const lbl = document.createElement('div');
+    lbl.className = 'ir-val';
+    lbl.textContent = v;
+    wrap.appendChild(lbl);
+    bar.appendChild(wrap);
   }
   // Highlight the strongest sensor, or centroid-nearest if centroid is valid
   let activeIdx = maxI;
   if (d.centroid >= 0) {
-    activeIdx = Math.round(d.centroid / 1000);
-    if (activeIdx < 0) activeIdx = 0;
-    if (activeIdx > 8) activeIdx = 8;
+    let rawIdx = Math.round(d.centroid / 1000);
+    if (rawIdx < 0) rawIdx = 0;
+    if (rawIdx > 8) rawIdx = 8;
+    activeIdx = 8 - rawIdx;
   }
   if (activeIdx >= 0) {
-    bar.children[activeIdx].classList.add('active');
+    bar.children[activeIdx].querySelector('.ir-seg').classList.add('active');
   }
   // Centroid caret (▼) at the interpolated position inside the wrapper
   let caret = document.getElementById('irCaret');
@@ -493,7 +538,7 @@ function update(d) {
     wrapper.appendChild(caret);
   }
   if (d.centroid >= 0) {
-    const pct = (d.centroid / 8000) * 100;
+    const pct = (1 - d.centroid / 8000) * 100;
     caret.textContent = '\u25bc';
     caret.style.left = pct + '%';
   } else {

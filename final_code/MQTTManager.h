@@ -107,13 +107,18 @@ public:
   void loop() {
     messenger.loop();
 
-    // Heartbeat watchdog: auto-disallow if no heartbeat for 1s
+    // Heartbeat watchdog: auto-disallow if no heartbeat for 5s
     // Only fires after server has contacted us at least once.
     if (serverEverContacted && millis() - lastHeartbeatMs > 5000u) {
       serverAllow = false;
-      Serial.println("MQTT: heartbeat timeout — server disallow");
-      sendLog("heartbeat timeout");
+      if (!heartbeatTimedOut) {
+        heartbeatTimedOut = true;
+        Serial.println("MQTT: heartbeat timeout — server disallow");
+        sendLog("heartbeat timeout");
+      }
       applyState();
+    } else {
+      heartbeatTimedOut = false;
     }
 
     // Registration every 10 seconds
@@ -344,6 +349,12 @@ public:
       return;
     }
 
+    // Motor test: MOTOR:L,500,2000  or  MOTOR:STOP
+    if (strncmp(msg, "MOTOR:", 6) == 0) {
+      if (onTestCommand) onTestCommand(String(msg));
+      return;
+    }
+
     Serial.print("MQTT: unknown from ");
     Serial.print(from);
     Serial.print(": ");
@@ -355,6 +366,7 @@ private:
   unsigned long lastRegisterMs = 0;
   bool lastEffective = false;
   bool serverEverContacted = false;
+  bool heartbeatTimedOut = false;
 
   static void staticCallback(const MessageMetadata& metadata,
                               const uint8_t* payload, size_t length) {
