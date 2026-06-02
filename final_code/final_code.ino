@@ -1000,6 +1000,64 @@ void runBaseExit() {
   followLeg(MOVE_SPEED, ticksForDistance(EXIT_LEG6_MM), LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
 
+  // ── Tunnel traversal ──
+  mqtt.sendLog("exit: tunnel 3s delay");
+  { unsigned long _ts = millis(); while (millis() - _ts < 3000) { mqtt.loop(); if (handleEStop()) { state = ST_IDLE; return; } delay(5); } }
+
+  mqtt.sendLog("exit: tunnel start");
+  motion.startTunnelCentre(550, 2.0f, 80, 60000);
+  {
+    unsigned long _encLast = micros();
+    unsigned long _checkLast = millis();
+    while (motion.tick(mc, -1, filteredUdsM, filteredUdsL, filteredUdsR) == MotionSM::RUNNING) {
+      unsigned long _now = micros();
+      if (_now - _encLast >= 500) { _encLast = _now; pollEncoders(); }
+      if (millis() - _checkLast >= 5) {
+        _checkLast = millis();
+        mqtt.loop();
+        if (handleEStop()) { motion.stop(); setMotors(mc, 0, 0); state = ST_IDLE; return; }
+        if (!mqtt.isEffectivelyEnabled()) { motion.stop(); setMotors(mc, 0, 0); state = ST_IDLE; return; }
+      }
+      if (filteredUdsM > 0 && filteredUdsM <= 10.0f) {
+        motion.stop();
+        setMotors(mc, 0, 0);
+        break;
+      }
+    }
+  }
+  setMotors(mc, 0, 0);
+  mqtt.sendLog("exit: at door, 2s delay");
+  { unsigned long _ts = millis(); while (millis() - _ts < 2000) {
+    mqtt.loop(); if (handleEStop()) { state = ST_IDLE; return; }
+    if (filteredUdsM > 10.0f) break;
+    delay(5);
+  } }
+
+  mqtt.sendLog("exit: tunnel exit, 200mm");
+  motion.startTunnelCentre(550, 2.0f, 80, 30000);
+  { long _encDoor = (abs(encL) + abs(encR)) / 2;
+    long _targetTicks = ticksForDistance(200);
+    unsigned long _encLast = micros();
+    unsigned long _checkLast = millis();
+    while (motion.tick(mc, -1, filteredUdsM, filteredUdsL, filteredUdsR) == MotionSM::RUNNING) {
+      unsigned long _now = micros();
+      if (_now - _encLast >= 500) { _encLast = _now; pollEncoders(); }
+      if (millis() - _checkLast >= 5) {
+        _checkLast = millis();
+        mqtt.loop();
+        if (handleEStop()) { motion.stop(); setMotors(mc, 0, 0); state = ST_IDLE; return; }
+        if (!mqtt.isEffectivelyEnabled()) { motion.stop(); setMotors(mc, 0, 0); state = ST_IDLE; return; }
+      }
+      if ((abs(encL) + abs(encR)) / 2 - _encDoor >= _targetTicks) {
+        motion.stop();
+        setMotors(mc, 0, 0);
+        break;
+      }
+    }
+  }
+  setMotors(mc, 0, 0);
+  mqtt.sendLog("exit: tunnel done");
+
   state = ST_IDLE;
   mqtt.sendLog("base exit done");
 }
