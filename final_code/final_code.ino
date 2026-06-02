@@ -791,7 +791,6 @@ void runBaseExit() {
   mqtt.sendLog("base exit start");
   mqtt.sendState("EXIT_BASE");
 
-  // Component Y-positions (mm from centre, +Y forward)
   const float CHASSIS_BACK_Y  = -CHASSIS_LENGTH / 2;
   const float CHASSIS_FRONT_Y =  CHASSIS_LENGTH / 2;
   const float IR_TO_BACK_MM  = POS_IR_CENTRE_Y - CHASSIS_BACK_Y;
@@ -799,39 +798,137 @@ void runBaseExit() {
   const float IR_TO_RFID_MM  = POS_IR_CENTRE_Y - POS_RFID_ANTENNA_Y;
   const float CHASSIS_BACK_TO_TREAD_BACK = 10;
 
-  const float EXIT_LEG1_MM = 460.0f - IR_TO_BACK_MM - CHASSIS_BACK_TO_TREAD_BACK;    // 460 - 102 = 358mm
-  const float EXIT_LEG2_MM = 330.0f;                     // 330mm
-  const float EXIT_LEG3_MM = 205.0f - IR_TO_RFID_MM;    // 205 - 27 = 178mm
-  const float EXIT_LEG4_MM = 205.0f + IR_TO_RFID_MM;    // 205 + 27 = 232mm
-  const float EXIT_LEG5_MM = 330.0f;                     // 330mm
-  const float EXIT_LEG6_MM = 320.0f - IR_TO_FRONT_MM;   // 320 - 68 = 252mm
-  const int   EXIT_TUNNEL_SPEED = 660;
+  const float EXIT_LEG1_MM = 460.0f - IR_TO_BACK_MM - CHASSIS_BACK_TO_TREAD_BACK;
+  const float EXIT_LEG2_MM = 330.0f;
+  const float EXIT_LEG3_MM = 205.0f - IR_TO_RFID_MM;
+  const float EXIT_LEG4_MM = 205.0f + IR_TO_RFID_MM;
+  const float EXIT_LEG5_MM = 330.0f;
+  const float EXIT_LEG6_MM = 320.0f - IR_TO_FRONT_MM;
 
+  // ── Adaptive PD line-follow helper (blocking, scans RFID) ──
+  // Returns when corner is detected or killed/timeout.
+  auto followLeg = [&](int baseSpeed, long targetTicks,
+                       float kp, float kd, int maxDiff,
+                       unsigned long timeoutMs) {
+    long startEnc = (abs(encL) + abs(encR)) / 2;
+    unsigned long deadline = millis() + timeoutMs;
+    float prevError = 0;
+    int lastErrorDir = 0;
+    unsigned long enterMs = millis();
+    unsigned long extremeMs = 0;
+    unsigned long _encLast = micros();
+    unsigned long _checkLast = millis();
 
-  // ── Leg 1: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG1_MM));
+    while (millis() < deadline) {
+      unsigned long _now = micros();
+      if (_now - _encLast >= 500) { _encLast = _now; pollEncoders(); }
+      if (millis() - _checkLast >= 5) {
+        _checkLast = millis(); mqtt.loop();
+        if (handleEStop()) { setMotors(mc, 0, 0); return; }
+      }
+      if (!mqtt.isEffectivelyEnabled()) { setMotors(mc, 0, 0); return; }
+
+      readIR(irVals);
+      int centroid = irCentroid(irVals);
+
+      // RFID scan — stop, log, resume
+      if (readRFID(rfidBuf, sizeof(rfidBuf))) {
+        setMotors(mc, 0, 0);
+        char buf[48]; snprintf(buf, sizeof(buf), "exit: RFID tag %s", rfidBuf);
+        mqtt.sendLog(buf);
+        startEnc = (abs(encL) + abs(encR)) / 2;
+        enterMs = millis();
+        deadline = millis() + timeoutMs;
+        extremeMs = 0;
+        { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
+        continue;
+      }
+
+      // Corner detection (skip first 300ms after start/RFID resume)
+      if (millis() - enterMs > 300) {
+        // Primary: ≥5 sensors active = perpendicular line spans array
+        int active = 0;
+        for (int i = 0; i < IR_COUNT; i++)
+          if (irVals[i] > 200) active++;
+        if (active >= 5) { setMotors(mc, 0, 0); return; }
+
+        // Tertiary: encoder fallback
+        long avgEnc = (abs(encL) + abs(encR)) / 2;
+        if (avgEnc - startEnc >= (long)(targetTicks * 1.3f)) { setMotors(mc, 0, 0); return; }
+      }
+
+      // Line lost — coast/pivot without triggering corner
+      if (centroid < 0) {
+        if (lastErrorDir != 0)
+          setMotors(mc, lastErrorDir * 200, -lastErrorDir * 200);
+        { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
+        continue;
+      }
+
+      float error = (float)centroid - 4000.0f;
+      float absErr = fabsf(error);
+
+      // Secondary: extreme error sustained > 150ms = line escaped to edge
+      if (millis() - enterMs > 300) {
+        if (absErr > 3500.0f) {
+          if (extremeMs == 0) extremeMs = millis();
+          else if (millis() - extremeMs > 150) { setMotors(mc, 0, 0); return; }
+        } else { extremeMs = 0; }
+      }
+
+      // Adaptive base speed
+      float speedFactor = 1.0f - (absErr / 4000.0f) * 0.5f;
+      if (speedFactor < 0.5f) speedFactor = 0.5f;
+      int base = (int)(baseSpeed * speedFactor);
+      if (base < MOTOR_MIN) base = MOTOR_MIN;
+
+      // PD
+      float deriv = error - prevError;
+      prevError = error;
+      float correction = kp * error + kd * deriv;
+      if (correction > maxDiff) correction = maxDiff;
+      if (correction < -maxDiff) correction = -maxDiff;
+
+      int left = constrain(base + (int)correction, MOTOR_MIN, MOTOR_MAX);
+      int right = constrain(base - (int)correction, MOTOR_MIN, MOTOR_MAX);
+
+      if (error > 500) lastErrorDir = 1;
+      else if (error < -500) lastErrorDir = -1;
+
+      setMotors(mc, left, right);
+
+      { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
+    }
+    setMotors(mc, 0, 0);
+  };
+
+  const float LF_KP = 6.0f;
+  const float LF_KD = 0.4f;
+  const int   LF_MAX_DIFF = 120;
+  const unsigned long LEG_TO = 10000;
+
+  // ── Leg 1 ──
   mqtt.sendLog("exit leg 1");
-  waitForMotion(); if (killed) return;
+  followLeg(MOVE_SPEED, ticksForDistance(EXIT_LEG1_MM), LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  if (killed) { state = ST_IDLE; return; }
 
-  // ── Turn right 90 ──
   motion.startTurn(1, TURN_SPEED, ticksForTurn(90*0.88));
   mqtt.sendLog("exit turn right");
-  waitForMotion(); if (killed) return;
+  waitForMotion(); if (killed) { state = ST_IDLE; return; }
 
-  // ── Leg 2: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG2_MM*0.81*0.80));
+  // ── Leg 2 ──
   mqtt.sendLog("exit leg 2");
-  waitForMotion(); if (killed) return;
+  followLeg(MOVE_SPEED, ticksForDistance(EXIT_LEG2_MM), LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  if (killed) { state = ST_IDLE; return; }
 
-  // ── Turn left 90 ──
   motion.startTurn(-1, TURN_SPEED, ticksForTurn(90*0.98*1.17*0.92));
   mqtt.sendLog("exit turn left");
-  waitForMotion(); if (killed) return;
+  waitForMotion(); if (killed) { state = ST_IDLE; return; }
 
-  // ── Leg 3: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG3_MM*1.00));
+  // ── Leg 3 ──
   mqtt.sendLog("exit leg 3");
-  waitForMotion(); if (killed) return;
+  followLeg(MOVE_SPEED, ticksForDistance(EXIT_LEG3_MM), LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  if (killed) { state = ST_IDLE; return; }
 
   // ── Scan RFID ──
   mqtt.sendLog("exit: scanning RFID");
@@ -843,7 +940,7 @@ void runBaseExit() {
     while (motion.tick(mc) == MotionSM::RUNNING) {
       unsigned long _now = micros();
       if (_now - _encLast >= 500) { _encLast = _now; pollEncoders(); }
-      if (millis() - _checkLast >= 5) { _checkLast = millis(); mqtt.loop(); handleEStop(); if (killed) return; }
+      if (millis() - _checkLast >= 5) { _checkLast = millis(); mqtt.loop(); handleEStop(); if (killed) { state = ST_IDLE; return; } }
       if (readRFID(rfidBuf, sizeof(rfidBuf))) { setMotors(mc, 0, 0); motion.stop(); tagFound = true; break; }
     }
   }
@@ -855,12 +952,12 @@ void runBaseExit() {
       while (motion.tick(mc) == MotionSM::RUNNING) {
         unsigned long _now = micros();
         if (_now - _encLast >= 500) { _encLast = _now; pollEncoders(); }
-        if (millis() - _checkLast >= 5) { _checkLast = millis(); mqtt.loop(); handleEStop(); if (killed) return; }
+        if (millis() - _checkLast >= 5) { _checkLast = millis(); mqtt.loop(); handleEStop(); if (killed) { state = ST_IDLE; return; } }
         if (readRFID(rfidBuf, sizeof(rfidBuf))) { setMotors(mc, 0, 0); motion.stop(); tagFound = true; break; }
       }
     }
   }
-  if (!tagFound) { mqtt.sendLog("exit: no RFID"); return; }
+  if (!tagFound) { mqtt.sendLog("exit: no RFID"); state = ST_IDLE; return; }
   mqtt.sendLog("exit: RFID found");
 
   // ── Ask server to exit ──
@@ -872,115 +969,38 @@ void runBaseExit() {
   while (millis() - waitStart < 15000) {
     unsigned long _nowA = micros();
     if (_nowA - _encLastA >= 500) { _encLastA = _nowA; pollEncoders(); }
-    if (millis() - _checkLastA >= 5) { _checkLastA = millis(); mqtt.loop(); handleEStop(); if (killed) return; }
+    if (millis() - _checkLastA >= 5) { _checkLastA = millis(); mqtt.loop(); handleEStop(); if (killed) { state = ST_IDLE; return; } }
     if (airlockAccepted) break;
     if ((millis() - waitStart) > 2000 && (millis() - waitStart) % 2000 < 25)
       mqtt.sendAirlockRequest("A", rfidBuf);
-    handleEStop(); if (killed) return;
+    handleEStop(); if (killed) { state = ST_IDLE; return; }
   }
-  if (!airlockAccepted) { mqtt.sendLog("exit: airlock denied"); return; }
+  if (!airlockAccepted) { mqtt.sendLog("exit: airlock denied"); state = ST_IDLE; return; }
 
-  // ── Leg 4: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG4_MM*0.65));
+  // ── Leg 4 ──
   mqtt.sendLog("exit leg 4");
-  waitForMotion(); if (killed) return;
+  followLeg(MOVE_SPEED, ticksForDistance(EXIT_LEG4_MM), LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  if (killed) { state = ST_IDLE; return; }
 
-  // ── Turn left 90 ──
   motion.startTurn(-1, TURN_SPEED, ticksForTurn(90*1.13*0.96));
   mqtt.sendLog("exit turn left");
-  waitForMotion(); if (killed) return;
+  waitForMotion(); if (killed) { state = ST_IDLE; return; }
 
-  // ── Leg 5: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG5_MM*1.00));
+  // ── Leg 5 ──
   mqtt.sendLog("exit leg 5");
-  waitForMotion(); if (killed) return;
+  followLeg(MOVE_SPEED, ticksForDistance(EXIT_LEG5_MM), LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  if (killed) { state = ST_IDLE; return; }
 
-  // ── Turn right 90 ──
   motion.startTurn(1, TURN_SPEED, ticksForTurn(90*1.06*0.83));
   mqtt.sendLog("exit turn right");
-  waitForMotion(); if (killed) return;
+  waitForMotion(); if (killed) { state = ST_IDLE; return; }
 
-  // ── Leg 6: forward (to tunnel entrance) ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG6_MM*0.7));
+  // ── Leg 6 ──
   mqtt.sendLog("exit leg 6");
-  waitForMotion(); if (killed) return;
+  followLeg(MOVE_SPEED, ticksForDistance(EXIT_LEG6_MM), LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  if (killed) { state = ST_IDLE; return; }
 
-  // // ── Wait for tunnel door to open ──
-  // mqtt.sendLog("exit: waiting for tunnel door");
-  // delay(500);  // settle
-  // // First wait for door to close (if it's already open)
-  unsigned long doorWait = millis();
-  // bool doorClosed = false;
-  // while (millis() - doorWait < 10000) {
-  //   mqtt.loop(); delay(20); handleEStop(); if (killed) return;
-  //   uds.tick();
-  //   filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
-  //   if (filteredUdsM < 30.0f) { doorClosed = true; break; }
-  // }
-  // if (!doorClosed) { mqtt.sendLog("exit: tunnel already open, proceeding"); }
-  // else {
-  //   // Door is closed, wait for it to open
-  //   while (true) {
-  //     mqtt.loop(); delay(20); handleEStop(); if (killed) return;
-  //     uds.tick();
-  //     filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
-  //     if (filteredUdsM > 50.0f) break;
-  //   }
-  // }
-  delay(3000);
-
-  // ── Enter tunnel: CENTRE_TUNNEL at max speed ──
-  // Capture baseline pitch before slope
-  float exitPitchRef = imuData.pitch;
-  bool pitchChanged = false;
-  mqtt.sendLog("exit: entering tunnel");
-  motion.startTunnelCentre(EXIT_TUNNEL_SPEED, pidKp, pidMaxDiff);
-  while (true) {
-    mqtt.loop();
-    if (handleEStop()) { motion.stop(); setMotors(mc, 0, 0); waitForUnkill(); return; }
-    pollEncoders();
-    uds.tick();
-    filteredUdsL = udsLFilter.update((float)uds.distances[UDSManager::LEFT]);
-    filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
-    filteredUdsR = udsRFilter.update((float)uds.distances[UDSManager::RIGHT]);
-    if (imuData.ok) readIMU(imuData);
-
-    int mr = motion.tick(mc, -1, filteredUdsM, filteredUdsL, filteredUdsR);
-    if (mr != MotionSM::RUNNING) break;
-
-    // Check front UDS for second door
-    if (filteredUdsM < 10.0f) { motion.stop(); setMotors(mc, 0, 0); break; }
-    { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
-  }
-
-  // ── Wait for second door to open ──
-  mqtt.sendLog("exit: waiting for second door");
-  doorWait = millis();
-  { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
-  while (millis() - doorWait < 15000) {
-    unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } }
-    mqtt.loop(); handleEStop(); if (killed) return;
-    uds.tick();
-    filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
-    if (filteredUdsM > 17.0f) break;
-  }
-
-  // ── Continue forward until gravity normalises ──
-  mqtt.sendLog("exit: continuing past tunnel");
-  setMotors(mc, EXIT_TUNNEL_SPEED, EXIT_TUNNEL_SPEED);
-  unsigned long pitchStart = millis();
-  while (millis() - pitchStart < 30000) {
-    unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } }
-    mqtt.loop();
-    if (handleEStop()) { setMotors(mc, 0, 0); waitForUnkill(); return; }
-    if (imuData.ok) readIMU(imuData);
-    if (!mqtt.isEffectivelyEnabled()) { setMotors(mc, 0, 0); return; }
-
-    float pitchDiff = fabsf(imuData.pitch - exitPitchRef);
-    if (pitchDiff > 8.0f) pitchChanged = true;
-    if (pitchChanged && pitchDiff < 3.0f) break;
-  }
-  setMotors(mc, 0, 0);
+  state = ST_IDLE;
   mqtt.sendLog("base exit done");
 }
 
