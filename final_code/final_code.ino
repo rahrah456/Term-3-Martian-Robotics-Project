@@ -460,9 +460,31 @@ void runNavigate() {
 // turn left, forward 3, turn left, forward 1, turn right, forward 1.
 
 void runAvoid() {
+  // Back up up to 250mm; start polling RFID after 70mm; stop early if tag found
   mqtt.sendLog("avoid: backing up");
-  motion.startStraight(-MOVE_SPEED, ticksForDistance(HOLE_SPACING_MM));
-  waitForMotion(); if (killed) return;
+  long backupStartL = encL, backupStartR = encR;
+  long backupTicks = ticksForDistance(HOLE_SPACING_MM);
+  long rfidEnableTicks = ticksForDistance(70);
+  motion.startStraight(-MOVE_SPEED, backupTicks);
+  unsigned long _mDead = millis() + 5, _eLast = micros();
+  bool rfidEnabled = false;
+  while (true) {
+    unsigned long _n = micros();
+    if (_n - _eLast >= 500) { _eLast = _n; pollEncoders(); }
+    if ((long)(millis() - _mDead) >= 0) { mqtt.loop(); _mDead = millis() + 5; }
+    int mr = motion.tick(mc);
+    if (mr != MotionSM::RUNNING) break;
+    handleEStop(); if (killed) { motion.stop(); setMotors(mc, 0, 0); return; }
+    if (!rfidEnabled) {
+      if ((abs(encL - backupStartL) + abs(encR - backupStartR)) / 2 >= rfidEnableTicks)
+        rfidEnabled = true;
+    }
+    if (rfidEnabled && readRFID(rfidBuf, sizeof(rfidBuf))) {
+      setMotors(mc, 0, 0); motion.stop();
+      mqtt.sendLog("avoid: tag during backup");
+      break;
+    }
+  }
 
   mqtt.sendLog("avoid: turn right");
   motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
