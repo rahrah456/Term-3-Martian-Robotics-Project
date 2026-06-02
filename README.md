@@ -130,54 +130,8 @@ MQTT over WiFi using the **MiniMessenger** library. The robot:
 
 The rover firmware is a single Arduino sketch split across header files by concern. All headers are `#include`d into `final_code.ino`, which owns the 50 Hz main loop and the high-level state machine. The Python dashboard communicates over MQTT.
 
-```mermaid
-graph TB
-    subgraph "Arduino Giga R1 WiFi"
-        INO["final_code.ino<br/>---------------<br/>setup() . 50 Hz loop()<br/>State machine . MQTT callbacks<br/>Encoder polling (quadrature table)"]
-
-        CFG["Config.h<br/>-----------<br/>Pin assignments . Motor limits<br/>Robot dimensions . Calibration<br/>Tick-fit formulae<br/>(ticksForDistance, ticksForTurn)"]
-
-        SEN["Sensors.h<br/>----------<br/>IR array (readIR, irCentroid)<br/>UDSManager round-robin L->M->R<br/>median-of-3 + EMA filter<br/>IMU tilt-compensated heading<br/>Light sensor . Bumper (TODO)"]
-
-        CTL["Control.h<br/>----------<br/>setMotors() . Motor bias (1.047)<br/>MotionSM: STRAIGHT, TURN,<br/>LINE_FOLLOW, WALL_FOLLOW,<br/>CENTRE_TUNNEL, AVOID_OBSTACLE<br/>ReviveMove (open-loop decel)<br/>Seed dispensing (servo, 5 seeds)"]
-
-        LOC["Localisation.h<br/>--------------<br/>Dead-reckoning (encoders + heading)<br/>Heading filter: gyro integration +<br/>mag correction (motors on) /<br/>sin-cos vector EMA (motors off)<br/>Slip detection . RFID snap correction"]
-
-        MAP["Map.h<br/>------<br/>9x9 grid geometry (250 mm spacing)<br/>Dynamic coordinate origin<br/>Logical-physical coordinate transform<br/>Hole centres . Arena boundaries"]
-
-        MQT["MQTTManager.h<br/>-------------<br/>MiniMessenger wrapper<br/>Heartbeat watchdog (1 s timeout)<br/>Pub: pose, state, sensor snapshot<br/>Sub: enable, PID, test cmds,<br/>heading reset, seed select"]
-
-        SEC["secrets.h<br/>----------<br/>WiFi SSID/password<br/>Broker host . Port . Group ID<br/>DASHBOARD_ID"]
-    end
-
-    subgraph "Python Dashboard"
-        DSH["dashboard.py<br/>--------------<br/>HTTP/SSE server (port 8081)<br/>Live map . Sensor telemetry<br/>PID tuning sliders . Test buttons<br/>Hole status editor<br/>Console for custom MQTT commands"]
-    end
-
-    subgraph "External"
-        BRK["MQTT Broker"]
-        SRV["Arena Server<br/>(heartbeat, fertility,<br/>airlock, emergency)"]
-    end
-
-    INO --> CFG
-    INO --> SEN
-    INO --> CTL
-    INO --> LOC
-    INO --> MAP
-    INO --> MQT
-    MQT --> SEC
-
-    MQT <-->|"WiFi 2.4 GHz"| BRK
-    DSH <-->|"paho-mqtt"| BRK
-    BRK <--> SRV
-
-    subgraph "Enable Chain"
-        direction LR
-        K["!killed<br/>(hw button)"] --> S["serverAllow<br/>(heartbeat)"]
-        S --> D["dashboardDesired<br/>(MQTT ENABLE)"]
-        D --> E(["Motors allowed"])
-    end
-```
+<img width="1600" height="710" alt="WhatsApp Image 2026-05-31 at 16 12 47" src="https://github.com/user-attachments/assets/39dcf725-35b6-480d-bc9d-415b2547e722" />
+<img width="281" height="601" alt="WhatsApp Image 2026-05-31 at 16 12 48" src="https://github.com/user-attachments/assets/64862510-18dc-49c4-9389-aa47b500512e" />
 
 ---
 
@@ -277,135 +231,26 @@ graph LR
 
 When an obstacle is detected (either via `BLOCKED` return from `STRAIGHT`/`TURN`, or directly in `runNavigate()` via `filteredUdsM`), the main loop transitions to `ST_AVOID`. `runAvoid()` starts the sensor-driven `AVOID_OBSTACLE` sequence inside `MotionSM`, which advances through four phases autonomously.
 
-```mermaid
-flowchart TB
-    DETECT(["Obstacle detected<br/>(mid UDS < threshold<br/>or motion BLOCKED)"]) --> DIR
+<img width="169" height="721" alt="WhatsApp Image 2026-05-31 at 16 12 48 (1)" src="https://github.com/user-attachments/assets/7d6cae25-3ec4-4580-a27c-098e6a0102d0" />
 
-    DIR{"avoidDirection = 0?"}
-    DIR -->|Yes| PICK["Pick direction by clearance:<br/>diff = udsLeft - udsRight<br/>diff > 15 cm -> CW (hug left)<br/>else -> CCW (hug right)"]
-    DIR -->|No, already set| P0
-
-    PICK --> P0
-
-    subgraph "Phase 0 -- Spin Until Clear"
-        P0["Spin in chosen direction<br/>(avoidDirection x speed)"]
-        P0 --> P0_CHK{"Mid UDS > 25 cm<br/>OR 2 s timeout?"}
-        P0_CHK -->|No| P0
-        P0_CHK -->|Yes| P1
-    end
-
-    subgraph "Phase 1 -- Hug Side"
-        P1["Drive forward, hug<br/>chosen side with PID"]
-        P1_CTRL["sideDist =<br/>avoidDirection>0 -> udsLeft<br/>else -> udsRight<br/>Error = sideDist - 15 cm<br/>Correction = error x 12.0<br/>Left = base + dir x corr<br/>Right = base - dir x corr"]
-        P1 --> P1_CTRL
-        P1_CTRL --> P1_CHK{"sideDist > 35 cm?<br/>(cleared obstacle)"}
-        P1_CHK -->|No| P1
-        P1_CHK -->|Yes| P2
-    end
-
-    subgraph "Phase 2 -- Clear + Swing Back"
-        P2["Drive straight<br/>(500 ms)"]
-        P2 --> P2_SWING["Swing back (opposite<br/>to initial turn, 600 ms)"]
-        P2_SWING --> P3
-    end
-
-    subgraph "Phase 3 -- Find & Centre on Line"
-        P3["Crawl forward (300 mm/s)"]
-        P3 --> P3_CHK{"Centroid<br/>detected?"}
-        P3_CHK -->|No, < 5 s| P3
-        P3_CHK -->|Timeout 5 s| DONE_TIMEOUT(["DONE (no line found)"])
-        P3_CHK -->|Yes| P3_CTRL["Proportional centering:<br/>error = centroid - 4000<br/>correction = error x 0.15<br/>cap +/-60<br/>300 mm/s + steer"]
-        P3_CTRL --> P3_OK{"|error| < 200?"}
-        P3_OK -->|No| P3_CTRL
-        P3_OK -->|Yes| DONE(["DONE -> ST_PLAN"])
-    end
-```
 
 ### Deposit Sequence
 
 The deposit sequence is a **blocking routine** with its own internal sensor-and-MQTT polling loop. It aligns the rover, searches for the RFID tag at the hole, queries the server for fertility, positions the seed chute, dispenses a seed, and marks the hole planted.
 
-```mermaid
-flowchart TB
-    START(["runDeposit() -> blocking"]) --> ALIGN
+<img width="169" height="961" alt="WhatsApp Image 2026-05-31 at 16 12 48 (2)" src="https://github.com/user-attachments/assets/0304cdfb-ee0c-4d88-a151-c6c8290ec305" />
 
-    ALIGN["1. Align to nearest cardinal heading<br/>(0, 90, 180, 270 deg)<br/>via motion.startTurn() + blocking tick"]
-    ALIGN --> SEARCH
+### Base Entrance Sequence
 
-    SEARCH["2. Drive forward (heading hold +<br/>IR line assist) while scanning<br/>for RFID tag -- up to 15 s"]
-    SEARCH --> TAG{"Tag<br/>found?"}
-    TAG -->|No| ABORT1(["Abort: no tag found"])
-    TAG -->|Yes| QUERY
+<img width="169" height="1561" alt="WhatsApp Image 2026-05-31 at 16 12 47 (1)" src="https://github.com/user-attachments/assets/ec89b855-b331-412d-838c-2f81001e30ff" />
 
-    QUERY["3. sendIsFertile(rfidBuf)<br/>Wait up to 10 s for server reply<br/>(re-send every 2 s)"]
-    QUERY --> REPLY{"Server<br/>replied?"}
-    REPLY -->|No| ABORT2(["Abort: no server reply"])
-    REPLY -->|Yes| FERTILE{"Hole<br/>fertile?"}
-    FERTILE -->|No| ABORT3(["Abort: hole not fertile"])
-    FERTILE -->|Yes| POSITION
-
-    POSITION["4. motion.startStraight()<br/>DEPOSIT_EXTRA_MM<br/>(aligns chute over hole)"]
-    POSITION --> DISPENSE
-
-    DISPENSE["5. dispenseNextSeed(servo)<br/>Servo advances to next slot<br/>(g_seedIdx auto-increments)"]
-    DISPENSE --> WIGGLE
-
-    WIGGLE["6. Wiggle fwd/back<br/>(30 mm each) to clear chute<br/>(two startStraight calls)"]
-    WIGGLE --> LOCK["lockSeeds(servo)<br/>Servo -> angle 0 (locked)"]
-    LOCK --> MARK
-
-    MARK["7. holePlanted = true<br/>sendSeedPlanted() via MQTT<br/>sendHoleStatus() to dashboard"]
-    MARK --> DONE(["Return -> ST_PLAN"])
-```
 
 ### Base Exit Sequence
 
 The base exit navigates a fixed 6-leg path through the base, scans the exit RFID, requests airlock permission from the server (re-sending every 2 s), traverses the tunnel using UDS-based centring, detects doors via front UDS, and detects the end of the tunnel using IMU pitch change (gravity normalisation).
 
-```mermaid
-flowchart TB
-    START(["runBaseExit() -> blocking"]) --> L1
+<img width="169" height="841" alt="WhatsApp Image 2026-05-31 at 16 12 47 (2)" src="https://github.com/user-attachments/assets/f9fa0a4b-e8a8-46bf-8f3a-d4cd2a62972a" />
 
-    L1["Leg 1: Forward 358 mm<br/>(clear base walls)"]
-    L1 --> T1["Turn right 90 deg"]
-    T1 --> L2["Leg 2: Forward 330 mm"]
-    L2 --> T2["Turn left 90 deg"]
-    T2 --> L3["Leg 3: Forward 178 mm<br/>(align RFID with exit tag)"]
-    L3 --> RFID
-
-    RFID["RFID scan: 5 forward steps<br/>(20 mm each)<br/>then 5 backward steps<br/>(20 mm each)"]
-    RFID --> RFID_CHK{"Tag<br/>found?"}
-    RFID_CHK -->|No| ABORT(["Abort: no RFID tag"])
-    RFID_CHK -->|Yes| AIRLOCK
-
-    AIRLOCK["sendAirlockRequest('B', tag)<br/>Wait up to 15 s<br/>Re-send every 2 s"]
-    AIRLOCK --> AIR_CHK{"airlockAccepted<br/>= true?"}
-    AIR_CHK -->|No| DENY(["Abort: airlock denied"])
-    AIR_CHK -->|Yes| L4
-
-    L4["Leg 4: Forward 232 mm"]
-    L4 --> T3["Turn left 90 deg"]
-    T3 --> L5["Leg 5: Forward 330 mm"]
-    L5 --> T4["Turn right 90 deg"]
-    T4 --> L6["Leg 6: Forward 252 mm<br/>(to tunnel entrance)"]
-    L6 --> DOOR_WAIT
-
-    DOOR_WAIT["Wait for first tunnel door:<br/>If already open -> proceed<br/>If closed (UDS < 30 cm)<br/>-> wait for > 50 cm<br/>(10 s timeout each)"]
-    DOOR_WAIT --> TUNNEL
-
-    TUNNEL["Enter tunnel:<br/>motion.startTunnelCentre()<br/>Proportional on L-R UDS<br/>(kp 1.0, speed 660)"]
-    TUNNEL --> DOOR2{"Front UDS<br/>< 30 cm?"}
-    DOOR2 -->|Yes| WAIT2["Stop, wait for 2nd door<br/>to open (> 50 cm, 15 s timeout)"]
-    DOOR2 -->|No, tunnel continues| TUNNEL
-    WAIT2 --> EXIT_DRIVE
-
-    EXIT_DRIVE["Drive forward at tunnel speed<br/>while scanning IMU pitch"]
-
-    EXIT_DRIVE --> PITCH{"Pitch diff > 8 deg<br/>then back < 3 deg?"}
-    PITCH -->|No| EXIT_DRIVE
-    PITCH -->|Yes| STOP["setMotors(0, 0)"]
-    STOP --> DONE(["Base exit complete -> ST_IDLE"])
-```
 
 ---
 
