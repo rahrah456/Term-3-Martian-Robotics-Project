@@ -855,7 +855,7 @@ void runBaseExitLineFollow() {
   mqtt.sendState("EXIT_BASE");
 
   const int   CREEP_SPEED     = 400;
-  const long  STEP_TICKS      = ticksForDistance(100.0f);
+  const long  STEP_TICKS      = ticksForDistance(30.0f);
   const int   CORR_SPEED      = 300;
   const float DRIFT_GAIN      = 10.0f;   // deg per unit drift (heading error)
   const float POS_GAIN        = 3.0f;    // deg per unit offset (position error)
