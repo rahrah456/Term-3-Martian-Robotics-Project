@@ -481,6 +481,31 @@ void runNavigate() {
   }
 }
 
+// ── Drive one node (250mm) with RFID polling after 70mm ──
+// Returns true if an RFID tag was found (stopped early), false if full distance reached.
+static bool driveNodeWithRFID(long ticks) {
+  motion.startStraight(MOVE_SPEED, ticks);
+  unsigned long _mDead = millis() + 5, _eLast = micros();
+  long sL = encL, sR = encR;
+  long rfidAt = ticksForDistance(70);
+  bool canRFID = false;
+  while (true) {
+    unsigned long _n = micros();
+    if (_n - _eLast >= 500) { _eLast = _n; pollEncoders(); }
+    if ((long)(millis() - _mDead) >= 0) { mqtt.loop(); _mDead = millis() + 5; }
+    int mr = motion.tick(mc);
+    if (mr != MotionSM::RUNNING) break;
+    handleEStop(); if (killed) { motion.stop(); setMotors(mc, 0, 0); return false; }
+    if (!canRFID && (abs(encL - sL) + abs(encR - sR)) / 2 >= rfidAt) canRFID = true;
+    if (canRFID && readRFID(rfidBuf, sizeof(rfidBuf))) {
+      setMotors(mc, 0, 0); motion.stop();
+      mqtt.sendLog("tag during move");
+      return true;
+    }
+  }
+  return false;
+}
+
 // ── Obstacle Avoidance (blocking, like runBaseExit) ─────────
 // Boxes around: turn right, forward 1, turn left, forward 3,
 // turn left, forward 1, turn right, forward 1.
@@ -492,32 +517,28 @@ void runAvoid() {
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: forward 1");
-  motion.startStraight(MOVE_SPEED, ticksForDistance(HOLE_SPACING_MM));
-  waitForMotion(); if (killed) return;
+  driveNodeWithRFID(ticksForDistance(HOLE_SPACING_MM)); if (killed) return;
 
   mqtt.sendLog("avoid: turn left");
   motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * g_avoidMults.next())));
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: forward 3");
-  motion.startStraight(MOVE_SPEED, ticksForDistance(HOLE_SPACING_MM * 3));
-  waitForMotion(); if (killed) return;
+  driveNodeWithRFID(ticksForDistance(HOLE_SPACING_MM * 3)); if (killed) return;
 
   mqtt.sendLog("avoid: turn left");
   motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * g_avoidMults.next())));
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: forward 1");
-  motion.startStraight(MOVE_SPEED, ticksForDistance(HOLE_SPACING_MM));
-  waitForMotion(); if (killed) return;
+  driveNodeWithRFID(ticksForDistance(HOLE_SPACING_MM)); if (killed) return;
 
   mqtt.sendLog("avoid: turn right");
   motion.startTurn(1, TURN_SPEED, ticksForTurn((long)(90.0f * g_avoidMults.next())));
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: forward 1");
-  motion.startStraight(MOVE_SPEED, ticksForDistance(HOLE_SPACING_MM));
-  waitForMotion(); if (killed) return;
+  driveNodeWithRFID(ticksForDistance(HOLE_SPACING_MM)); if (killed) return;
 
   mqtt.sendLog("avoid: detour complete");
   state = ST_PLAN;
@@ -920,8 +941,7 @@ static void runNodePath(bool useLineFollow) {
       uint8_t r, c; float h = loc.pose.headingDeg;
       moveAndSnap(250.0f, h, true, r, c);
     } else {
-      motion.startStraight(MOVE_SPEED, ticksForDistance(HOLE_SPACING_MM));
-      waitForMotion(); if (killed) return;
+      driveNodeWithRFID(ticksForDistance(HOLE_SPACING_MM));
     }
   };
 
@@ -937,7 +957,7 @@ static void runNodePath(bool useLineFollow) {
 
   // Leg 2: forward 1 node
   driveNode(); mqtt.sendLog("node 3");
-  if (killed) return;
+  if (killed) return; 
 
   // Turn left 90
   motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * g_gridMults.next())));
