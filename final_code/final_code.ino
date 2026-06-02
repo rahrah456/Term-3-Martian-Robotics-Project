@@ -504,14 +504,9 @@ static void driveDist(long ticks) {
 void runAvoid() {
   g_avoidMults.reset();
 
-  // Probe forward 1 tile at a time; if UDS still < 20cm after a tile, start box detour
-  mqtt.sendLog("avoid: probing");
-  while (true) {
-    motion.startStraight(MOVE_SPEED, ticksForDistance(HOLE_SPACING_MM));
-    waitForMotion(); if (killed) return;
-    delay(1000);
-    if (filteredUdsM > 0 && filteredUdsM < 20.0f) break;
-  }
+  // Move 1 tile forward, then box around the obstacle
+  mqtt.sendLog("avoid: forward 1");
+  driveDist(ticksForDistance(HOLE_SPACING_MM)); if (killed) return;
 
   mqtt.sendLog("avoid: turn right");
   motion.startTurn(1, TURN_SPEED, ticksForTurn((long)(90.0f * g_avoidMults.next())));
