@@ -496,7 +496,9 @@ static bool driveNodeWithRFID(long ticks) {
     int mr = motion.tick(mc);
     if (mr != MotionSM::RUNNING) break;
     handleEStop(); if (killed) { motion.stop(); setMotors(mc, 0, 0); return false; }
-    if (!canRFID && (abs(encL - sL) + abs(encR - sR)) / 2 >= rfidAt) canRFID = true;
+    long d = (abs(encL - sL) + abs(encR - sR)) / 2;
+    if (d >= ticks) { setMotors(mc, 0, 0); motion.stop(); break; }
+    if (!canRFID && d >= rfidAt) canRFID = true;
     if (canRFID && readRFID(rfidBuf, sizeof(rfidBuf))) {
       setMotors(mc, 0, 0); motion.stop();
       mqtt.sendLog("tag during move");
@@ -933,7 +935,7 @@ static bool moveAndSnap(float distMm, float& heading, bool useLineFollow,
 }
 
 static void runNodePath(bool useLineFollow) {
-  mqtt.sendLog(useLineFollow ? "grid nav start" : "dead reckon start");
+  mqtt.sendLog(useLineFollow ? "grid nav start" : "dea   reckon start");
   if (!useLineFollow) g_gridMults.reset();
 
   auto driveNode = [&]() {
