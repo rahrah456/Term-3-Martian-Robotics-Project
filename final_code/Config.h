@@ -78,14 +78,7 @@ const int PIN_ACT_LED  = 39;    // HIGH = red (stopped), LOW = green (running)
 // MFRC522_I2C on Wire1, address 0x28
 
 // ── IMU ─────────────────────────────────────────────────────
-// LIS3MDL (mag) + LSM6 (accel/gyro) on Wire
-// Hard-iron calibration (recalibrated)
-const int16_t MAG_MIN_X = -7832; // -7078;
-const int16_t MAG_MIN_Y =  1548; // 2593;
-const int16_t MAG_MIN_Z = -3134; // 91;
-const int16_t MAG_MAX_X = -2232; // -3234;
-const int16_t MAG_MAX_Y =  5844; // 6347;
-const int16_t MAG_MAX_Z =  4977; // 4698;
+// LSM6 (accel/gyro) on Wire (magnetometer removed — unreliable)
 
 // ── Bumper (TODO: confirm pin once wired) ───────────────────
 // Digital switch on front bumper — TODO: wire to Giga GPIO

@@ -62,7 +62,6 @@ void pollEncoders() {
 static EMA udsLFilter(0.2f), udsMFilter(0.2f), udsRFilter(0.2f);
 float filteredUdsL, filteredUdsM, filteredUdsR;
 volatile bool killed = false;
-bool motorsRunning = false;   // tracked for heading filter
 
 // ── State Machine ───────────────────────────────────────────
 enum State {
@@ -206,7 +205,8 @@ void onMqttRevive(const char* robotId) {
 }
 
 void onMqttHeadingReset() {
-  loc.resetHeading(0.0f, imuData.headingDeg);
+  loc.resetHeading(0.0f);
+  imuData.headingDeg = 0.0f;
   mqtt.sendLog("heading reset to 0");
 }
 
@@ -242,11 +242,8 @@ static void runTestLoop(unsigned long durationMs) {
     udsM = uds.distances[UDSManager::MID];
     udsR = uds.distances[UDSManager::RIGHT];
     if (imuData.ok) readIMU(imuData);
-    loc.update(encL, encR, imuData.headingDeg, imuData.gyroZ, imuData.accX, imuData.accY, imuData.pitch, imuData.roll, motorsRunning);
-
-    // Advance motion
-    int mr = motion.tick(mc, irCentroidVal, (float)udsM, (float)udsL, (float)udsR);
-    if (mr != MotionSM::RUNNING) break;
+    loc.update(encL, encR, imuData.gyroZ, imuData.accX, imuData.accY, imuData.pitch, imuData.roll);
+    if (imuData.ok) imuData.headingDeg = loc.pose.headingDeg;
 
     // Publish every 500ms
     if (millis() - lastPublish >= 500) {
@@ -499,9 +496,9 @@ void  () {
     irCentroidVal = irCentroid(irVals);
     uds.tick();
     if (imuData.ok) readIMU(imuData);
-    loc.update(encL, encR, imuData.headingDeg, imuData.gyroZ,
-               imuData.accX, imuData.accY, imuData.pitch, imuData.roll,
-               motorsRunning);
+    loc.update(encL, encR, imuData.gyroZ,
+               imuData.accX, imuData.accY, imuData.pitch, imuData.roll);
+    if (imuData.ok) imuData.headingDeg = loc.pose.headingDeg;
 
     if (readRFID(rfidBuf, sizeof(rfidBuf))) {
       tagFound = true;
@@ -1062,7 +1059,8 @@ void loop() {
     filteredUdsM = udsMFilter.update((float)udsM);
     filteredUdsR = udsRFilter.update((float)udsR);
     if (imuData.ok) readIMU(imuData);
-    loc.update(encL, encR, imuData.headingDeg, imuData.gyroZ, imuData.accX, imuData.accY, imuData.pitch, imuData.roll, motorsRunning);
+    loc.update(encL, encR, imuData.gyroZ, imuData.accX, imuData.accY, imuData.pitch, imuData.roll);
+    if (imuData.ok) imuData.headingDeg = loc.pose.headingDeg;
     lightVal = readLightSensor();
 
     // RFID: tag is 8-char opaque ID → send to server for resolution

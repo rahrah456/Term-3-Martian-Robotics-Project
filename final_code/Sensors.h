@@ -3,7 +3,6 @@
 
 #include <Arduino.h>
 #include <Wire.h>
-#include <LIS3MDL.h>
 #include <LSM6.h>
 // #include <MFRC522_I2C.h>
 #include "Config.h"
@@ -185,15 +184,14 @@ float medianOf5(float a, float b, float c, float d, float e) {
 // readRFID() defined in final_code.ino (needs global rfid object).
 
 // ── IMU ─────────────────────────────────────────────────────
-// LIS3MDL magnetometer + LSM6 accelerometer/gyro for
-// tilt-compensated heading with gyro-assisted dead-reckoning.
+// LSM6 accelerometer/gyro only (magnetometer removed — unreliable).
+// Heading is dead-reckoned from gyro integration; accel provides
+// pitch/roll for gravity subtraction.
 
 struct IMUData {
-  LIS3MDL mag;
   LSM6    imu;
-  float headingDeg;     // tilt-compensated magnetometer heading
+  float headingDeg;     // gyro-integrated heading (dead-reckoned)
   float gyroZ;          // degrees per second (yaw rate)
-  float magX, magY, magZ;
   float accX, accY, accZ;
   float pitch, roll;    // radians, for gravity subtraction
   bool  ok;
@@ -205,9 +203,7 @@ void initIMU(IMUData& d) {
   delay(50);
 
   d.ok = false;
-  if (!d.mag.init())   { Serial.println("IMU: mag init failed"); return; }
   if (!d.imu.init())   { Serial.println("IMU: lsm6 init failed"); return; }
-  d.mag.enableDefault();
   d.imu.enableDefault();
   d.ok = true;
   Serial.println("IMU: OK");
@@ -216,13 +212,9 @@ void initIMU(IMUData& d) {
 void readIMU(IMUData& d) {
   if (!d.ok) return;
 
-  d.mag.read();
   d.imu.read();
 
   // Scale values
-  d.magX = d.mag.m.x * (1.0f / 146.0f);
-  d.magY = d.mag.m.y * (1.0f / 146.0f);
-  d.magZ = d.mag.m.z * (1.0f / 146.0f);
   d.accX = d.imu.a.x * (1.0f / 16384.0f);
   d.accY = d.imu.a.y * (1.0f / 16384.0f);
   d.accZ = d.imu.a.z * (1.0f / 16384.0f);
@@ -230,35 +222,23 @@ void readIMU(IMUData& d) {
   // Gyro Z (yaw rate) in dps — LSM6 at ±2000 dps = 70 per dps
   d.gyroZ = d.imu.g.z / 70.0f;
 
-  // Hard-iron corrected magnetometer
-  float mx = d.mag.m.x - ((int32_t)MAG_MIN_X + MAG_MAX_X) / 2.0f;
-  float my = d.mag.m.y - ((int32_t)MAG_MIN_Y + MAG_MAX_Y) / 2.0f;
-  float mz = d.mag.m.z - ((int32_t)MAG_MIN_Z + MAG_MAX_Z) / 2.0f;
-
-  // Normalise accelerometer
+  // Pitch and roll from accelerometer (body frame)
   float ax = d.imu.a.x, ay = d.imu.a.y, az = d.imu.a.z;
   float normA = sqrtf(ax * ax + ay * ay + az * az);
   if (normA < 1.0f) return;
   ax /= normA; ay /= normA; az /= normA;
-
-  // Pitch and roll from normalised accelerometer (body frame)
   d.pitch = atan2f(-ax, sqrtf(ay * ay + az * az));
   d.roll  = atan2f(ay, az);
 
-  // East = cross(mag, gravity)
-  float ex = ay * mz - az * my;
-  float ey = az * mx - ax * mz;
-  float ez = ax * my - ay * mx;
-  float normE = sqrtf(ex * ex + ey * ey + ez * ez);
-  if (normE < 1.0f) return;
-  ex /= normE; ey /= normE; ez /= normE;
-
-  // North = cross(gravity, east)
-  float nx = ay * ez - az * ey;
-
-  float h = atan2f(ex, nx) * 180.0f / PI;
-  if (h < 0) h += 360.0f;
-  d.headingDeg = h;
+  // Heading from gyro integration (local static, raw estimate)
+  static unsigned long _lastUs = 0;
+  unsigned long _now = micros();
+  float _dt = (_lastUs == 0) ? 0.02f : (_now - _lastUs) / 1000000.0f;
+  _lastUs = _now;
+  if (_dt <= 0 || _dt > 0.05) _dt = 0.02f;
+  d.headingDeg += d.gyroZ * _dt;
+  if (d.headingDeg < 0.0f) d.headingDeg += 360.0f;
+  if (d.headingDeg >= 360.0f) d.headingDeg -= 360.0f;
 }
 
 // ── Bumper ──────────────────────────────────────────────────

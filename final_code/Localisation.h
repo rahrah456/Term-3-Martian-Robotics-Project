@@ -10,9 +10,7 @@
 //  LOCALISATION  —  dead-reckoning with opportunistic correction
 //  Pose tracked relative to base origin (mm, degrees).
 //
-//  Heading:  gyro-assisted complementary filter.
-//    Motors off  →  magnetometer heading (EMA-smoothed)
-//    Motors on   →  gyro integration + slow mag correction
+//  Heading:  pure gyro dead-reckoning (no magnetometer).
 //
 //  Position:  encoder primary, accelerometer blended only when
 //    encoder-vs-accel slip discrepancy exceeds threshold.
@@ -28,14 +26,7 @@ public:
   Pose pose;
   bool valid;
 
-  // Heading filter state (persistent across update() calls)
-  float gyroHeading;
-  float sinH, cosH;
-  bool  gyroInitialised;
-  float magOffset;        // subtracted from imuHeading so resetHeading sticks
-
-  Localisation() : valid(false), gyroHeading(0), sinH(0), cosH(0),
-                   gyroInitialised(false), magOffset(0) {
+  Localisation() : valid(false) {
     pose.x = 0; pose.y = 0; pose.headingDeg = 0;
   }
 
@@ -46,29 +37,18 @@ public:
     valid = true;
   }
 
-  // Reset heading: offsets the raw magnetometer reading so the effective heading
-  // becomes headingDeg and stays there (mag won't pull it back).
-  void resetHeading(float headingDeg, float currentImuHeading) {
-    magOffset = currentImuHeading - headingDeg;
-    if (magOffset > 180.0f) magOffset -= 360.0f;
-    if (magOffset < -180.0f) magOffset += 360.0f;
+  // Reset heading to given value (gyro-only, no mag)
+  void resetHeading(float headingDeg) {
     pose.headingDeg = headingDeg;
-    gyroHeading = headingDeg;
-    float hRad = headingDeg * DEG_TO_RAD;
-    sinH = sinf(hRad);
-    cosH = cosf(hRad);
-    gyroInitialised = true;
   }
 
   // ── Dead-reckoning update ─────────────────────────────────
-  // Call every 20ms with encoder deltas, IMU heading & gyro,
-  // and body-frame accelerometer (g).  motorsActive controls
-  // the heading complementary filter blend.
+  // Call every 20ms with encoder deltas, gyro yaw rate,
+  // and body-frame accelerometer (g).
   void update(long encL, long encR,
-              float imuHeading, float gyroZ,
+              float gyroZ,
               float accX, float accY,
-              float pitch, float roll,
-              bool motorsActive) {
+              float pitch, float roll) {
     if (!valid) return;
 
     static long lastEncL = encL, lastEncR = encR;
@@ -83,42 +63,12 @@ public:
     lastUs = now;
     if (dt <= 0 || dt > 0.05) dt = 0.02;
 
+    // ── Heading: pure gyro integration ──────────────────────
+    pose.headingDeg += gyroZ * dt;
+    if (pose.headingDeg < 0.0f) pose.headingDeg += 360.0f;
+    if (pose.headingDeg >= 360.0f) pose.headingDeg -= 360.0f;
+
     float rad = pose.headingDeg * DEG_TO_RAD;
-
-    // Apply user-set mag offset so resetHeading() sticks
-    float effectiveMagHeading = imuHeading - magOffset;
-    if (effectiveMagHeading < 0.0f) effectiveMagHeading += 360.0f;
-    if (effectiveMagHeading >= 360.0f) effectiveMagHeading -= 360.0f;
-
-    // ── Heading: gyro-assisted complementary filter ─────────
-    // Use sin/cos vector averaging to avoid 0/360 wrapping in EMA.
-    // State is in member variables (persistent).
-    if (!gyroInitialised) {
-      gyroHeading = effectiveMagHeading;
-      float hRad = effectiveMagHeading * DEG_TO_RAD;
-      sinH = sinf(hRad);
-      cosH = cosf(hRad);
-      gyroInitialised = true;
-    }
-
-    if (motorsActive) {
-      // Motors distort mag field — integrate gyro, slow mag correction
-      gyroHeading += gyroZ * dt;
-      float diff = effectiveMagHeading - gyroHeading;
-      if (diff > 180.0f) diff -= 360.0f;
-      if (diff < -180.0f) diff += 360.0f;
-      gyroHeading += diff * 0.2f;   // ~0.1s correction (wrapping-safe)
-
-      pose.headingDeg = gyroHeading;
-    } else {
-      // No motor interference — sin/cos vector EMA on mag heading
-      const float hAlpha = 0.2f;   // ~0.1s EMA at 50Hz
-      float hRad = effectiveMagHeading * DEG_TO_RAD;
-      sinH += (sinf(hRad) - sinH) * hAlpha;
-      cosH += (cosf(hRad) - cosH) * hAlpha;
-      pose.headingDeg = atan2f(sinH, cosH) * RAD_TO_DEG;
-      if (pose.headingDeg < 0) pose.headingDeg += 360.0f;
-    }
 
     // ── Position: encoder primary ───────────────────────────
     float avgTicks = (dL + dR) / 2.0f;
