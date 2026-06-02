@@ -204,7 +204,35 @@ public:
   // ── Receive: parse incoming messages ───────────────────────
 
   void handleMessage(const char* from, const char* msg) {
-    // Try standard key=value protocol first
+    // ── isFertileReply — raw strncmp (matches working test script) ──
+    if (strncmp(msg, "type=isFertileReply", 19) == 0) {
+      char fertile[8] = "", planted[8] = "", xv[8] = "", yv[8] = "";
+      const char* p = msg;
+      while (*p) {
+        while (*p == ' ') p++;
+        if (strncmp(p, "fertile=", 8) == 0) { size_t j = 0; p += 8; while (*p && *p != ' ' && j < 7) fertile[j++] = *p++; fertile[j] = 0; continue; }
+        if (strncmp(p, "planted=", 8) == 0) { size_t j = 0; p += 8; while (*p && *p != ' ' && j < 7) planted[j++] = *p++; planted[j] = 0; continue; }
+        if (strncmp(p, "x=", 2) == 0) { size_t j = 0; p += 2; while (*p && *p != ' ' && j < 7) xv[j++] = *p++; xv[j] = 0; continue; }
+        if (strncmp(p, "y=", 2) == 0) { size_t j = 0; p += 2; while (*p && *p != ' ' && j < 7) yv[j++] = *p++; yv[j] = 0; continue; }
+        while (*p && *p != ' ') p++;
+      }
+      Serial.print(F("MQTT: isFertileReply fertile="));
+      Serial.print(fertile);
+      Serial.print(F(" planted="));
+      Serial.print(planted);
+      Serial.print(F(" x="));
+      Serial.print(xv);
+      Serial.print(F(" y="));
+      Serial.println(yv);
+      if (onHoleStatus && strlen(fertile) && strlen(planted) && strlen(xv) && strlen(yv)) {
+        bool f = (strcmp(fertile, "true") == 0);
+        bool p = (strcmp(planted, "true") == 0);
+        onHoleStatus((uint8_t)atoi(yv), (uint8_t)atoi(xv), f, p);
+      }
+      return;
+    }
+
+    // Try standard key=value protocol
     char typeVal[32];
     if (getKeyValue(msg, "type", typeVal, sizeof(typeVal))) {
 
@@ -234,24 +262,6 @@ public:
         serverAllow = false;
         Serial.println("MQTT: disabled by server");
         applyState();
-        return;
-      }
-
-      if (strcmp(typeVal, "isFertileReply") == 0) {
-        char fertileVal[8], plantedVal[8];
-        int x = -1, y = -1;
-        bool hasFertile = getKeyValue(msg, "fertile", fertileVal, sizeof(fertileVal));
-        bool hasPlanted = getKeyValue(msg, "planted", plantedVal, sizeof(plantedVal));
-        // Parse x,y if present (grid coordinates)
-        char xv[4], yv[4];
-        if (getKeyValue(msg, "x", xv, sizeof(xv))) x = atoi(xv);
-        if (getKeyValue(msg, "y", yv, sizeof(yv))) y = atoi(yv);
-
-        if (onHoleStatus && hasFertile && hasPlanted && x >= 0 && y >= 0) {
-          bool f = (strcmp(fertileVal, "true") == 0);
-          bool p = (strcmp(plantedVal, "true") == 0);
-          onHoleStatus((uint8_t)y, (uint8_t)x, f, p);
-        }
         return;
       }
 
