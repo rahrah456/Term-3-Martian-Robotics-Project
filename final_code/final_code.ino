@@ -492,30 +492,9 @@ void runAvoid() {
 void runDeposit() {
   mqtt.sendState("DEPOSIT");
 
-  // ── 1. Round heading to nearest cardinal direction ────────
-  float h = loc.pose.headingDeg;
-  float cardinals[] = {0.0f, 90.0f, 180.0f, 270.0f};
-  int bestIdx = 0;
-  float bestD = 999.0f;
-  for (int i = 0; i < 4; i++) {
-    float d = fabsf(h - cardinals[i]);
-    if (d > 180.0f) d = 360.0f - d;
-    if (d < bestD) { bestD = d; bestIdx = i; }
-  }
-  float targetHeading = cardinals[bestIdx];
-
-  float turn = targetHeading - h;
-  if (turn > 180.0f) turn -= 360.0f;
-  if (turn < -180.0f) turn += 360.0f;
-  if (fabsf(turn) > 5.0f) {
-    mqtt.sendLog("deposit: turning to heading");
-    motion.startTurn(turn > 0 ? 1 : -1, TURN_SPEED, ticksForTurn(fabsf(turn)));
-    waitForMotion(); if (killed) return;
-    delay(200);
-  }
-
-  // ── 2. Move forward until RFID tag detected ───────────────
+  // ── 1. Move forward until RFID tag detected ───────────────
   mqtt.sendLog("deposit: searching for tag");
+  float targetHeading = loc.pose.headingDeg;
   unsigned long moveStart = millis();
   bool tagFound = false;
 
@@ -557,7 +536,7 @@ void runDeposit() {
     return;
   }
 
-  // ── 3. Query server for fertility ──────────────────────────
+  // ── 2. Query server for fertility ──────────────────────────
   mqtt.sendLog("deposit: checking fertility");
   lastHoleReplyRow = -1;
   lastHoleReplyCol = -1;
@@ -590,11 +569,11 @@ void runDeposit() {
   motion.startStraight(MOVE_SPEED, ticksForDistance(DEPOSIT_EXTRA_MM));
   waitForMotion(); if (killed) return;
 
-  // ── 6. Dispense seed ───────────────────────────────────────
+  // ── 5. Dispense seed ───────────────────────────────────────
   mqtt.sendLog("deposit: dispensing");
   dispenseNextSeed(servo);
 
-  // ── 7. Wiggle to clear chute ──────────────────────────────
+  // ── 6. Wiggle to clear chute ──────────────────────────────
   int wiggleSpeed = constrain(MOTOR_MIN + 30, MOTOR_MIN, MOTOR_MAX);
   motion.startStraight(wiggleSpeed, ticksForDistance(30));
   waitForMotion();
@@ -602,7 +581,7 @@ void runDeposit() {
   waitForMotion();
   lockSeeds(servo);
 
-  // ── 8. Mark planted ───────────────────────────────────────
+  // ── 7. Mark planted ───────────────────────────────────────
   holePlanted[holeRow][holeCol] = true;
   mqtt.sendSeedPlanted(rfidBuf);
   mqtt.sendHoleStatus(holeRow, holeCol, true, holeFertile[holeRow][holeCol]);
