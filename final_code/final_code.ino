@@ -482,6 +482,7 @@ void runNavigate() {
 }
 
 // ── Drive forward with encoder-based distance stop ─────────
+// Checks RFID on every iteration — stops early if tag found.
 static void driveDist(long ticks) {
   motion.startStraight(MOVE_SPEED, ticks);
   unsigned long _mDead = millis() + 5, _eLast = micros();
@@ -490,6 +491,7 @@ static void driveDist(long ticks) {
     unsigned long _n = micros();
     if (_n - _eLast >= 500) { _eLast = _n; pollEncoders(); }
     if ((long)(millis() - _mDead) >= 0) { mqtt.loop(); _mDead = millis() + 5; }
+    if (readRFID(rfidBuf, sizeof(rfidBuf))) { setMotors(mc, 0, 0); motion.stop(); mqtt.sendLog("tag"); break; }
     int mr = motion.tick(mc);
     if (mr != MotionSM::RUNNING) break;
     handleEStop(); if (killed) { motion.stop(); setMotors(mc, 0, 0); return; }
