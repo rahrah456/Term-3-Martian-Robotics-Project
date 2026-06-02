@@ -63,6 +63,7 @@ static EMA udsLFilter(0.2f), udsMFilter(0.2f), udsRFilter(0.2f);
 float filteredUdsL, filteredUdsM, filteredUdsR;
 volatile bool killed = false;
 bool motorsRunning = false;
+volatile bool motorTestStop = false;
 
 // ── State Machine ───────────────────────────────────────────
 enum State {
@@ -95,7 +96,7 @@ struct TurnMultSet {
     while (tok && count < MAX_TURN_MULTS) { vals[count++] = (float)atof(tok); tok = strtok(NULL, ","); }
   }
 };
-TurnMultSet g_avoidMults, g_gridMults;
+TurnMultSet g_gridMults;
 
 bool handleEStop() {
   static bool lastBtn = HIGH;
@@ -249,6 +250,7 @@ static void runTestLoop(unsigned long durationMs) {
     mqtt.loop();
     if (handleEStop()) { setMotors(mc, 0, 0); motion.stop(); waitForUnkill(); break; }
     if (!mqtt.isEffectivelyEnabled()) { setMotors(mc, 0, 0); motion.stop(); break; }
+    if (motorTestStop) { motorTestStop = false; setMotors(mc, 0, 0); motion.stop(); break; }
 
     // Full sensor read
     readIR(irVals);
@@ -379,15 +381,38 @@ void onMqttTestCommand(const String& cmd) {
     state = ST_IDLE;
     mqtt.sendLog("grid nav nolines done");
   }
-  else if (cmd.startsWith("OVERRIDE_AVOID_TURNS:")) {
-    g_avoidMults.parse(cmd.c_str() + 21);
-    char lb[64]; snprintf(lb, sizeof(lb), "avoid mults: %d values", g_avoidMults.count);
-    mqtt.sendLog(lb);
-  }
   else if (cmd.startsWith("OVERRIDE_GRID_TURNS:")) {
     g_gridMults.parse(cmd.c_str() + 20);
     char lb[64]; snprintf(lb, sizeof(lb), "grid mults: %d values", g_gridMults.count);
     mqtt.sendLog(lb);
+  }
+  else if (cmd.startsWith("MOTOR:L,") || cmd.startsWith("MOTOR:R,") || cmd.startsWith("MOTOR:BOTH,")) {
+    char motor; int speed, l = 0, r = 0; unsigned long dur = 2000;
+    if (cmd.startsWith("MOTOR:BOTH,")) {
+      int n = sscanf(cmd.c_str(), "MOTOR:BOTH,%d,%d,%lu", &l, &r, &dur);
+      if (n < 2) {
+        sscanf(cmd.c_str(), "MOTOR:BOTH,%d,%lu", &speed, &dur);
+        l = speed; r = speed;
+      }
+      motor = 'B';
+    } else {
+      sscanf(cmd.c_str(), "MOTOR:%c,%d,%lu", &motor, &speed, &dur);
+      if (motor == 'L') l = speed;
+      else if (motor == 'R') r = speed;
+    }
+    char lb[64]; snprintf(lb, sizeof(lb), "motor %c: L=%d R=%d, %lums", motor, l, r, dur);
+    mqtt.sendLog(lb);
+    motorTestStop = false;
+    setMotors(mc, l, r);
+    state = ST_TEST;
+    runTestLoop(dur);
+    state = ST_IDLE;
+    mqtt.sendLog("motor test done");
+  }
+  else if (cmd == "MOTOR:STOP") {
+    motorTestStop = true;
+    setMotors(mc, 0, 0);
+    mqtt.sendLog("motor stop");
   }
 }
 
@@ -486,6 +511,7 @@ void runNavigate() {
 static void driveDist(long ticks) {
   motion.startStraight(MOVE_SPEED, ticks);
   unsigned long _mDead = millis() + 5, _eLast = micros();
+  unsigned long _snapLast = 0;
   long sL = encL, sR = encR;
   long rfidStart = ticksForDistance(70);
   bool canRFID = false;
@@ -493,6 +519,7 @@ static void driveDist(long ticks) {
     unsigned long _n = micros();
     if (_n - _eLast >= 500) { _eLast = _n; pollEncoders(); }
     if ((long)(millis() - _mDead) >= 0) { mqtt.loop(); _mDead = millis() + 5; }
+    if (millis() - _snapLast >= 200) { _snapLast = millis(); mqtt.sendSensorSnapshot(irVals, irCentroidVal, (long)filteredUdsL, (long)filteredUdsM, (long)filteredUdsR, imuData.headingDeg, lightVal); }
     long d = (abs(encL - sL) + abs(encR - sR)) / 2;
     if (!canRFID && d >= rfidStart) canRFID = true;
     if (canRFID && readRFID(rfidBuf, sizeof(rfidBuf))) { setMotors(mc, 0, 0); motion.stop(); mqtt.sendLog("tag"); break; }
@@ -504,45 +531,177 @@ static void driveDist(long ticks) {
 }
 
 // ── Obstacle Avoidance (blocking, like runBaseExit) ─────────
-// Boxes around: turn right, forward 1, turn left, forward 3,
-// turn left, forward 1, turn right, forward 1.
+// Three-phase sensor-guided detour:
+//   Phase 0: reverse until front UDS=15cm, then spin 35° CCW
+//   Phase 1: drive straight until side UDS <= 10cm, then hug 10-20cm diff
+//   Phase 2: straight 3cm then arc CW to front of obstacle
+//   Phase 3: rotate 20° CW, drive 40cm, then sweep search for IR line (centroid >= 0)
 
 void runAvoid() {
-  g_avoidMults.reset();
+  mqtt.sendState("AVOID");
 
-  // Move 1 tile forward, then box around the obstacle
-  mqtt.sendLog("avoid: forward 1");
-  driveDist(ticksForDistance(HOLE_SPACING_MM)); if (killed) return;
+  unsigned long phaseStart, encLast, checkLast;
+  unsigned long sweepToggle;
+  unsigned long lastPub = 0;
+  int sweepDir = 1;
 
-  mqtt.sendLog("avoid: turn right");
-  motion.startTurn(1, TURN_SPEED, ticksForTurn((long)(90.0f * g_avoidMults.next())));
+  // ── Phase 0: reverse until front UDS = 15cm, then spin 35° CCW ──
+  mqtt.sendLog("avoid: phase 0 reverse");
+  phaseStart = millis();
+  encLast = micros();
+  checkLast = millis();
+  setMotors(mc, -300, -300);
+  while (millis() - phaseStart < 5000) {
+    unsigned long now = micros();
+    if (now - encLast >= 500) { encLast = now; pollEncoders(); }
+    if (millis() - checkLast >= 5) { checkLast = millis(); mqtt.loop(); handleEStop(); if (killed) { setMotors(mc, 0, 0); return; } }
+    uds.tick();
+    filteredUdsL = udsLFilter.update((float)uds.distances[UDSManager::LEFT]);
+    filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+    filteredUdsR = udsRFilter.update((float)uds.distances[UDSManager::RIGHT]);
+    if (millis() - lastPub >= 200) { lastPub = millis(); mqtt.sendSensorSnapshot(irVals, irCentroidVal, (long)filteredUdsL, (long)filteredUdsM, (long)filteredUdsR, imuData.headingDeg, lightVal); }
+    if (filteredUdsM >= 15.0f) break;
+    { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
+  }
+  if (killed) return;
+  setMotors(mc, 0, 0);
+  mqtt.sendLog("avoid: phase 0 spin 35");
+  long p0SpinStartL = encL, p0SpinStartR = encR;
+  long p0Target = ticksForTurn(38);
+  phaseStart = millis();
+  encLast = micros();
+  checkLast = millis();
+  setMotors(mc, -TURN_SPEED, TURN_SPEED);
+  while (millis() - phaseStart < 5000) {
+    unsigned long now = micros();
+    if (now - encLast >= 500) { encLast = now; pollEncoders(); }
+    if (millis() - checkLast >= 5) { checkLast = millis(); mqtt.loop(); handleEStop(); if (killed) { setMotors(mc, 0, 0); return; } }
+    uds.tick();
+    filteredUdsL = udsLFilter.update((float)uds.distances[UDSManager::LEFT]);
+    filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+    filteredUdsR = udsRFilter.update((float)uds.distances[UDSManager::RIGHT]);
+    if (((long)abs(encL - p0SpinStartL) + (long)abs(encR - p0SpinStartR)) / 2 >= p0Target) { setMotors(mc, 0, 0); break; }
+    if (millis() - lastPub >= 200) { lastPub = millis(); mqtt.sendSensorSnapshot(irVals, irCentroidVal, (long)filteredUdsL, (long)filteredUdsM, (long)filteredUdsR, imuData.headingDeg, lightVal); }
+    { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
+  }
+  if (killed) return;
+  mqtt.sendLog("avoid: phase 0 done");
+
+  // ── Phase 1: drive straight until side within 10cm, then hug 10-20 ──
+  mqtt.sendLog("avoid: phase 1 approach");
+  encLast = micros();
+  checkLast = millis();
+  unsigned long p1Deadline = millis() + 10000;
+  bool p1Hugging = false;
+  while (millis() < p1Deadline) {
+    unsigned long now = micros();
+    if (now - encLast >= 500) { encLast = now; pollEncoders(); }
+    if (millis() - checkLast >= 5) { checkLast = millis(); mqtt.loop(); handleEStop(); if (killed) { setMotors(mc, 0, 0); return; } }
+    uds.tick();
+    filteredUdsL = udsLFilter.update((float)uds.distances[UDSManager::LEFT]);
+    filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+    filteredUdsR = udsRFilter.update((float)uds.distances[UDSManager::RIGHT]);
+    if (millis() - lastPub >= 200) { lastPub = millis(); mqtt.sendSensorSnapshot(irVals, irCentroidVal, (long)filteredUdsL, (long)filteredUdsM, (long)filteredUdsR, imuData.headingDeg, lightVal); }
+    if (filteredUdsR > 50.0f) break;
+    if (!p1Hugging && filteredUdsR <= 10.0f) p1Hugging = true;
+    if (p1Hugging) {
+      float error = 15.0f - filteredUdsR;
+      int correction = constrain((int)(pidKp * 0.4f * error), -pidMaxDiff, pidMaxDiff);
+      setMotors(mc, 350 + correction, 350 - correction);
+    } else {
+      setMotors(mc, 350, 350);
+    }
+    { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
+  }
+  if (killed) return;
+  setMotors(mc, 0, 0);
+  mqtt.sendLog("avoid: phase 1 done");
+  mqtt.sendLog("avoid: phase 1 spin cw 28");
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(28));
   waitForMotion(); if (killed) return;
+  delay(1000);
 
-  mqtt.sendLog("avoid: forward 1");
-  driveDist(ticksForDistance(HOLE_SPACING_MM)); if (killed) return;
+  // ── Phase 2: straight 3cm then arc CW to front of obstacle ──
+  mqtt.sendLog("avoid: phase 2 drive");
+  driveDist(ticksForDistance(40.0f)); if (killed) return;
+  mqtt.sendLog("avoid: phase 2 arc");
+  encLast = micros();
+  checkLast = millis();
+  unsigned long arcDeadline = millis() + 1200;
+  setMotors(mc, 650, 100);
+  while (millis() < arcDeadline) {
+    unsigned long now = micros();
+    if (now - encLast >= 500) { encLast = now; pollEncoders(); }
+    if (millis() - checkLast >= 5) { checkLast = millis(); mqtt.loop(); handleEStop(); if (killed) { setMotors(mc, 0, 0); return; } }
+    uds.tick();
+    filteredUdsL = udsLFilter.update((float)uds.distances[UDSManager::LEFT]);
+    filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+    filteredUdsR = udsRFilter.update((float)uds.distances[UDSManager::RIGHT]);
+    if (millis() - lastPub >= 200) { lastPub = millis(); mqtt.sendSensorSnapshot(irVals, irCentroidVal, (long)filteredUdsL, (long)filteredUdsM, (long)filteredUdsR, imuData.headingDeg, lightVal); }
+    { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
+  }
+  setMotors(mc, 0, 0);
+  delay(1000);
 
-  mqtt.sendLog("avoid: turn left");
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * g_avoidMults.next())));
+  // ── Phase 3: rotate 30° CW, drive 40cm, then sweep search for IR line ──
+  mqtt.sendLog("avoid: phase 3 turn");
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(30));
   waitForMotion(); if (killed) return;
+  mqtt.sendLog("avoid: phase 3 drive");
+  driveDist(ticksForDistance(75.0f)); if (killed) return;
+  delay(500);
+  mqtt.sendLog("avoid: phase 3 sweep");
+  phaseStart = millis();
+  encLast = micros();
+  checkLast = millis();
+  sweepToggle = millis();
+  sweepDir = 1;
+  bool lineFound = false;
+  setMotors(mc, 300, 300);
+  while (millis() - phaseStart < 20000) {
+    unsigned long now = micros();
+    if (now - encLast >= 500) { encLast = now; pollEncoders(); }
+    if (millis() - checkLast >= 5) { checkLast = millis(); mqtt.loop(); handleEStop(); if (killed) { setMotors(mc, 0, 0); return; } }
+    uds.tick();
+    filteredUdsL = udsLFilter.update((float)uds.distances[UDSManager::LEFT]);
+    filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+    filteredUdsR = udsRFilter.update((float)uds.distances[UDSManager::RIGHT]);
+    if (millis() - sweepToggle >= 400) { sweepToggle = millis(); sweepDir = -sweepDir; setMotors(mc, 200 + sweepDir * 150, 200 - sweepDir * 150); }
+    readIR(irVals);
+    irCentroidVal = irCentroid(irVals);
+    if (millis() - lastPub >= 200) { lastPub = millis(); mqtt.sendSensorSnapshot(irVals, irCentroidVal, (long)filteredUdsL, (long)filteredUdsM, (long)filteredUdsR, imuData.headingDeg, lightVal); }
+    if (irCentroidVal >= 0) {
+      mqtt.sendLog("avoid: centering on line");
+      long lfStartL = encL, lfStartR = encR;
+      long lfTarget = ticksForDistance(100);
+      unsigned long lfDeadline = millis() + 5000;
+      setMotors(mc, 300, 300);
+      while (millis() < lfDeadline) {
+        unsigned long _n = micros();
+        if (_n - encLast >= 500) { encLast = _n; pollEncoders(); }
+        if (millis() - checkLast >= 5) { checkLast = millis(); mqtt.loop(); handleEStop(); if (killed) { setMotors(mc, 0, 0); return; } }
+        readIR(irVals); irCentroidVal = irCentroid(irVals);
+        if (millis() - lastPub >= 200) { lastPub = millis(); mqtt.sendSensorSnapshot(irVals, irCentroidVal, (long)filteredUdsL, (long)filteredUdsM, (long)filteredUdsR, imuData.headingDeg, lightVal); }
+        if (irCentroidVal < 0) break;
+        long avgEnc = (abs(encL - lfStartL) + abs(encR - lfStartR)) / 2;
+        if (avgEnc >= lfTarget) { setMotors(mc, 0, 0); lineFound = true; break; }
+        int err = irCentroidVal - 4000;
+        int corr = constrain((int)(err * 0.5f), -80, 80);
+        setMotors(mc, 300 + corr, 300 - corr);
+        { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
+      }
+      if (lineFound) break;
+      mqtt.sendLog("avoid: centering failed, resuming sweep");
+      setMotors(mc, 200 + sweepDir * 150, 200 - sweepDir * 150);
+      continue;
+    }
+    { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
+  }
+  if (killed) return;
+  setMotors(mc, 0, 0);
+  if (!lineFound) mqtt.sendLog("avoid: line not found");
 
-  mqtt.sendLog("avoid: forward 2");
-  driveDist(ticksForDistance(HOLE_SPACING_MM * 2)); if (killed) return;
-
-  mqtt.sendLog("avoid: turn left");
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * g_avoidMults.next())));
-  waitForMotion(); if (killed) return;
-
-  mqtt.sendLog("avoid: forward 1");
-  driveDist(ticksForDistance(HOLE_SPACING_MM)); if (killed) return;
-
-  mqtt.sendLog("avoid: turn right");
-  motion.startTurn(1, TURN_SPEED, ticksForTurn((long)(90.0f * g_avoidMults.next())));
-  waitForMotion(); if (killed) return;
-
-  mqtt.sendLog("avoid: forward 1");
-  driveDist(ticksForDistance(HOLE_SPACING_MM)); if (killed) return;
-
-  mqtt.sendLog("avoid: detour complete");
+  mqtt.sendLog("avoid: complete");
   state = ST_PLAN;
 }
 
