@@ -244,9 +244,11 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .btn-danger { background: var(--red); color: #fff; }
   .btn-small { min-height: 28px; padding: 0 10px; font-size: 12px; }
   .map-box { position: relative; width: 100%; aspect-ratio: 1; background: #fbfcfd; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-  .ir-bar { display: flex; gap: 2px; height: 48px; align-items: flex-end; margin: 8px 0; }
-  .ir-seg { flex: 1; background: var(--blue); min-height: 2px; border-radius: 2px 2px 0 0; transition: height 0.15s; opacity: 0.7; }
+  .ir-bar { display: flex; gap: 2px; height: 48px; align-items: flex-end; margin: 8px 0 2px 0; }
+  .ir-col { flex: 1; display: flex; flex-direction: column; align-items: center; }
+  .ir-seg { width: 100%; background: var(--blue); min-height: 2px; border-radius: 2px 2px 0 0; transition: height 0.15s; opacity: 0.7; }
   .ir-seg.active { background: var(--green); opacity: 1; }
+  .ir-val { font-size: 9px; color: var(--muted); line-height: 1.2; }
   .log-box { height: 150px; overflow-y: auto; font-family: "Cascadia Code", "Fira Code", "Consolas", monospace; font-size: 12px; color: var(--muted); background: #fbfcfd; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
   .ctrl-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
   .ctrl-row input[type="text"] { flex: 1; min-width: 120px; border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; background: var(--surface-strong); font: inherit; font-size: 13px; color: var(--ink); }
@@ -459,7 +461,7 @@ function update(d) {
   document.getElementById('centroid').textContent = d.centroid;
   document.getElementById('uds').textContent = d.uds.join(' / ') + ' cm';
 
-  // IR bar
+  // IR bar — each sensor gets a column with bar + value label underneath
   const bar = document.getElementById('irBar');
   const wrapper = bar.parentElement;
   bar.innerHTML = '';
@@ -468,11 +470,22 @@ function update(d) {
   for (let i = 0; i < 9; i++) {
     let v = vals[i] || 0;
     if (v > maxV) { maxV = v; maxI = i; }
+
+    const col = document.createElement('div');
+    col.className = 'ir-col';
+
     const seg = document.createElement('div');
     seg.className = 'ir-seg';
     seg.style.height = Math.max(4, (v / 1000) * 100) + '%';
     seg.title = 'S' + i + ': ' + v;
-    bar.appendChild(seg);
+    col.appendChild(seg);
+
+    const label = document.createElement('div');
+    label.className = 'ir-val';
+    label.textContent = v;
+    col.appendChild(label);
+
+    bar.appendChild(col);
   }
   // Highlight the strongest sensor, or centroid-nearest if centroid is valid
   let activeIdx = maxI;
@@ -481,8 +494,8 @@ function update(d) {
     if (activeIdx < 0) activeIdx = 0;
     if (activeIdx > 8) activeIdx = 8;
   }
-  if (activeIdx >= 0) {
-    bar.children[activeIdx].classList.add('active');
+  if (activeIdx >= 0 && bar.children[activeIdx]) {
+    bar.children[activeIdx].children[0].classList.add('active');
   }
   // Centroid caret (▼) at the interpolated position inside the wrapper
   let caret = document.getElementById('irCaret');

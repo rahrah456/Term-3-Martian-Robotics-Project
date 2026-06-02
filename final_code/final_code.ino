@@ -859,7 +859,7 @@ void runBaseExitLineFollow() {
   const int   CORR_SPEED      = 300;
   const float DRIFT_GAIN      = 10.0f;   // deg per unit drift (heading error)
   const float POS_GAIN        = 3.0f;    // deg per unit offset (position error)
-  const int   IR_THRESH       = 200;
+  const int   IR_THRESH       = 400;
   const int   T_SENSOR_CNT    = 7;
   const int   TURN_SENSOR_CNT = 5;
 
