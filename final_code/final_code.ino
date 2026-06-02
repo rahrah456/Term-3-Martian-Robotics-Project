@@ -860,8 +860,9 @@ void runBaseExitLineFollow() {
   const float DRIFT_GAIN      = 10.0f;   // deg per unit drift (heading error)
   const float POS_GAIN        = 3.0f;    // deg per unit offset (position error)
   const int   IR_THRESH       = 400;
-  const int   T_SENSOR_CNT    = 7;
+  const int   T_SENSOR_CNT    = 8;    // at least 8 of 9 sensors
   const int   TURN_SENSOR_CNT = 5;
+  int         intCount        = 0;    // persistence: same type on 2 calls
 
   // Intersection types: 0=none, -1=left, 1=right, 2=T
   auto intersectionType = [&]() -> int {
@@ -871,9 +872,14 @@ void runBaseExitLineFollow() {
     for (int i = 3; i < 6; i++) if (irVals[i] > IR_THRESH) c++;
     for (int i = 6; i < 9; i++) if (irVals[i] > IR_THRESH) r++;
     int t = l + c + r;
-    if (t >= T_SENSOR_CNT && l >= 2 && c >= 2 && r >= 2) return 2;
-    if (t >= TURN_SENSOR_CNT && l >= 2 && r < 2)        return -1;
-    if (t >= TURN_SENSOR_CNT && r >= 2 && l < 2)        return 1;
+    int type = 0;
+    if (t >= T_SENSOR_CNT && l >= 2 && c >= 2 && r >= 2) type = 2;
+    else if (t >= TURN_SENSOR_CNT && l >= 2 && r < 2)    type = -1;
+    else if (t >= TURN_SENSOR_CNT && r >= 2 && l < 2)    type = 1;
+    // Require same type on 2 consecutive calls to trigger
+    if (type != 0 && type == intCount)  { intCount = 0; return type; }
+    if (type != 0)                      { intCount = type; return 0; }
+    intCount = 0;
     return 0;
   };
 
@@ -903,6 +909,16 @@ void runBaseExitLineFollow() {
         waitForMotion(); if (killed) return false;
       }
     }
+
+    // Publish sensor snapshot so dashboard stays live during blocking
+    irCentroidVal = irCentroid(irVals);
+    uds.tick();
+    filteredUdsL = udsLFilter.update((float)uds.distances[UDSManager::LEFT]);
+    filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+    filteredUdsR = udsRFilter.update((float)uds.distances[UDSManager::RIGHT]);
+    if (imuData.ok) readIMU(imuData);
+    mqtt.sendSensorSnapshot(irVals, irCentroidVal, (long)filteredUdsL, (long)filteredUdsM, (long)filteredUdsR, imuData.headingDeg, lightVal);
+
     return true;
   };
 
