@@ -83,15 +83,19 @@ State state = ST_INIT;
 
 // ── Turn multiplier overrides (tuneable from dashboard) ────
 #define MAX_TURN_MULTS 8
-float g_turnMults[MAX_TURN_MULTS] = {1,1,1,1,1,1,1,1};
-int g_turnMultCount = 0;
-int g_turnMultIdx = 0;
-
-static void resetTurnMults() { g_turnMultIdx = 0; }
-static float nextTurnMult() {
-  if (g_turnMultIdx < g_turnMultCount) return g_turnMults[g_turnMultIdx++];
-  return 1.0f;
-}
+struct TurnMultSet {
+  float vals[MAX_TURN_MULTS];
+  int count = 0, idx = 0;
+  void reset() { idx = 0; }
+  float next() { return (idx < count) ? vals[idx++] : 1.0f; }
+  void parse(const char* s) {
+    count = 0;
+    char buf[128]; strncpy(buf, s, sizeof(buf)-1); buf[sizeof(buf)-1] = 0;
+    char* tok = strtok(buf, ",");
+    while (tok && count < MAX_TURN_MULTS) { vals[count++] = (float)atof(tok); tok = strtok(NULL, ","); }
+  }
+};
+TurnMultSet g_avoidMults, g_gridMults;
 
 bool handleEStop() {
   static bool lastBtn = HIGH;
@@ -375,16 +379,14 @@ void onMqttTestCommand(const String& cmd) {
     state = ST_IDLE;
     mqtt.sendLog("grid nav nolines done");
   }
-  else if (cmd.startsWith("OVERRIDE_TURN_MULTS:")) {
-    const char* p = cmd.c_str() + 20;  // skip "OVERRIDE_TURN_MULTS:"
-    g_turnMultCount = 0;
-    char buf[128]; strncpy(buf, p, sizeof(buf)-1); buf[sizeof(buf)-1] = 0;
-    char* tok = strtok(buf, ",");
-    while (tok && g_turnMultCount < MAX_TURN_MULTS) {
-      g_turnMults[g_turnMultCount++] = (float)atof(tok);
-      tok = strtok(NULL, ",");
-    }
-    char lb[64]; snprintf(lb, sizeof(lb), "turn mults: %d values", g_turnMultCount);
+  else if (cmd.startsWith("OVERRIDE_AVOID_TURNS:")) {
+    g_avoidMults.parse(cmd.c_str() + 21);
+    char lb[64]; snprintf(lb, sizeof(lb), "avoid mults: %d values", g_avoidMults.count);
+    mqtt.sendLog(lb);
+  }
+  else if (cmd.startsWith("OVERRIDE_GRID_TURNS:")) {
+    g_gridMults.parse(cmd.c_str() + 20);
+    char lb[64]; snprintf(lb, sizeof(lb), "grid mults: %d values", g_gridMults.count);
     mqtt.sendLog(lb);
   }
 }
@@ -484,9 +486,9 @@ void runNavigate() {
 // turn left, forward 1, turn right, forward 1.
 
 void runAvoid() {
-  resetTurnMults();
+  g_avoidMults.reset();
   mqtt.sendLog("avoid: turn right");
-  motion.startTurn(1, TURN_SPEED, ticksForTurn((long)(90.0f * nextTurnMult())));
+  motion.startTurn(1, TURN_SPEED, ticksForTurn((long)(90.0f * g_avoidMults.next())));
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: forward 1");
@@ -494,7 +496,7 @@ void runAvoid() {
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: turn left");
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * nextTurnMult())));
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * g_avoidMults.next())));
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: forward 3");
@@ -502,7 +504,7 @@ void runAvoid() {
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: turn left");
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * nextTurnMult())));
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * g_avoidMults.next())));
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: forward 1");
@@ -510,7 +512,7 @@ void runAvoid() {
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: turn right");
-  motion.startTurn(1, TURN_SPEED, ticksForTurn((long)(90.0f * nextTurnMult())));
+  motion.startTurn(1, TURN_SPEED, ticksForTurn((long)(90.0f * g_avoidMults.next())));
   waitForMotion(); if (killed) return;
 
   mqtt.sendLog("avoid: forward 1");
@@ -911,7 +913,7 @@ static bool moveAndSnap(float distMm, float& heading, bool useLineFollow,
 
 static void runNodePath(bool useLineFollow) {
   mqtt.sendLog(useLineFollow ? "grid nav start" : "dead reckon start");
-  if (!useLineFollow) resetTurnMults();
+  if (!useLineFollow) g_gridMults.reset();
 
   auto driveNode = [&]() {
     if (useLineFollow) {
@@ -929,7 +931,7 @@ static void runNodePath(bool useLineFollow) {
   if (killed) return;
 
   // Turn right 90
-  motion.startTurn(1, TURN_SPEED, ticksForTurn((long)(90.0f * nextTurnMult())));
+  motion.startTurn(1, TURN_SPEED, ticksForTurn((long)(90.0f * g_gridMults.next())));
   waitForMotion(); if (killed) return;
   delay(200);
 
@@ -938,7 +940,7 @@ static void runNodePath(bool useLineFollow) {
   if (killed) return;
 
   // Turn left 90
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * nextTurnMult())));
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * g_gridMults.next())));
   waitForMotion(); if (killed) return;
   delay(200);
 

@@ -358,8 +358,11 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <input id="moveMm" value="250" class="num" style="width:60px" placeholder="mm">
       <input id="turnDeg" value="90" class="num" style="width:50px" placeholder="°">
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:MOVE_TURN:'+document.getElementById('moveMm').value+','+document.getElementById('turnDeg').value)">Move+Turn</button>
-      <input id="turnMults" value="1.0,1.0,1.0,1.0" class="num" style="width:140px" placeholder="turn mults">
-      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:OVERRIDE_TURN_MULTS:'+document.getElementById('turnMults').value)">Set Turn Mults</button>
+      <span style="font-size:12px;color:var(--muted);font-weight:500;">Turn mults:</span>
+      <input id="avoidMults" value="1.0,1.0,1.0,1.0" class="num" style="width:100px" placeholder="avoid">
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:OVERRIDE_AVOID_TURNS:'+document.getElementById('avoidMults').value)">Set Avoid</button>
+      <input id="gridMults" value="1.0,1.0" class="num" style="width:100px" placeholder="grid">
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:OVERRIDE_GRID_TURNS:'+document.getElementById('gridMults').value)">Set Grid</button>
     </div>
   </div>
 
