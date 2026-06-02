@@ -879,11 +879,11 @@ static bool driveSegment(float heading, long targetTicks, bool useLineFollow,
 
 static void backtrack50() {
   long target = ticksForDistance(50);
-  long start = (abs(encL) + abs(encR)) / 2;
+  long startL = encL, startR = encR;
   unsigned long t0 = millis();
   while (millis() - t0 < 5000) {
     pollEncoders();
-    if ((abs(encL) + abs(encR)) / 2 - start >= target) break;
+    if ((abs(encL - startL) + abs(encR - startR)) / 2 >= target) break;
     setMotors(mc, -300, -300);
     unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } }
     mqtt.loop();
@@ -913,36 +913,38 @@ static bool moveAndSnap(float distMm, float& heading, bool useLineFollow,
 static void runNodePath(bool useLineFollow) {
   mqtt.sendLog(useLineFollow ? "grid nav start" : "dead reckon start");
 
-  uint8_t row, col;
-  float heading = loc.pose.headingDeg;
+  auto driveNode = [&]() {
+    if (useLineFollow) {
+      uint8_t r, c; float h = loc.pose.headingDeg;
+      moveAndSnap(250.0f, h, true, r, c);
+    } else {
+      motion.startStraight(MOVE_SPEED, ticksForDistance(HOLE_SPACING_MM));
+      waitForMotion(); if (killed) return;
+    }
+  };
 
   // Leg 1: forward 2 nodes
-  if (moveAndSnap(250.0f, heading, useLineFollow, row, col))
-    mqtt.sendLog("node 1");
-  if (moveAndSnap(250.0f, heading, useLineFollow, row, col))
-    mqtt.sendLog("node 2");
+  driveNode(); mqtt.sendLog("node 1");
+  driveNode(); mqtt.sendLog("node 2");
+  if (killed) return;
 
   // Turn right 90
   motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
   waitForMotion(); if (killed) return;
-  heading = loc.pose.headingDeg;
   delay(200);
 
   // Leg 2: forward 1 node
-  if (moveAndSnap(250.0f, heading, useLineFollow, row, col))
-    mqtt.sendLog("node 3");
+  driveNode(); mqtt.sendLog("node 3");
+  if (killed) return;
 
   // Turn left 90
   motion.startTurn(-1, TURN_SPEED, ticksForTurn(90));
   waitForMotion(); if (killed) return;
-  heading = loc.pose.headingDeg;
   delay(200);
 
   // Leg 3: forward 2 nodes
-  if (moveAndSnap(250.0f, heading, useLineFollow, row, col))
-    mqtt.sendLog("node 4");
-  if (moveAndSnap(250.0f, heading, useLineFollow, row, col))
-    mqtt.sendLog("node 5");
+  driveNode(); mqtt.sendLog("node 4");
+  driveNode(); mqtt.sendLog("node 5");
 }
 
 void runGridNav() {
