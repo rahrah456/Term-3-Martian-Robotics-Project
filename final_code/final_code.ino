@@ -297,6 +297,9 @@ void onMqttTestCommand(const String& cmd) {
     if (imuData.ok) readIMU(imuData);
     pollEncoders();
     state = ST_TEST;
+    mqtt.sendLog("deposit: advancing 6cm");
+    motion.startStraight(MOVE_SPEED, ticksForDistance(60));
+    waitForMotion();
     runDeposit();
     state = ST_IDLE;
     mqtt.sendLog("deposit done");
@@ -482,11 +485,7 @@ void runDeposit() {
     delay(200);
   }
 
-  // ── 2. Move forward ~6cm, then scan for RFID tag ─────────
-  mqtt.sendLog("deposit: advancing 6cm");
-  motion.startStraight(MOVE_SPEED, ticksForDistance(60));
-  waitForMotion(); if (killed) return;
-
+  // ── 2. Move forward until RFID tag detected ───────────────
   mqtt.sendLog("deposit: searching for tag");
   unsigned long moveStart = millis();
   bool tagFound = false;
