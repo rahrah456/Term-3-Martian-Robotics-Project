@@ -95,7 +95,7 @@ struct TurnMultSet {
     while (tok && count < MAX_TURN_MULTS) { vals[count++] = (float)atof(tok); tok = strtok(NULL, ","); }
   }
 };
-TurnMultSet g_avoidMults, g_gridMults;
+TurnMultSet g_avoidMults, g_gridMults, g_exitTurnMults, g_exitMoveMults;
 
 bool handleEStop() {
   static bool lastBtn = HIGH;
@@ -341,7 +341,7 @@ void onMqttTestCommand(const String& cmd) {
     if (imuData.ok) readIMU(imuData);
     pollEncoders();
     state = ST_TEST;
-    runBaseExitLineFollow();
+    runBaseExit();
     state = ST_IDLE;
     mqtt.sendLog("base exit done");
   }
@@ -387,6 +387,16 @@ void onMqttTestCommand(const String& cmd) {
   else if (cmd.startsWith("OVERRIDE_GRID_TURNS:")) {
     g_gridMults.parse(cmd.c_str() + 20);
     char lb[64]; snprintf(lb, sizeof(lb), "grid mults: %d values", g_gridMults.count);
+    mqtt.sendLog(lb);
+  }
+  else if (cmd.startsWith("OVERRIDE_EXIT_TURNS:")) {
+    g_exitTurnMults.parse(cmd.c_str() + 20);
+    char lb[64]; snprintf(lb, sizeof(lb), "exit turn mults: %d values", g_exitTurnMults.count);
+    mqtt.sendLog(lb);
+  }
+  else if (cmd.startsWith("OVERRIDE_EXIT_MOVES:")) {
+    g_exitMoveMults.parse(cmd.c_str() + 20);
+    char lb[64]; snprintf(lb, sizeof(lb), "exit move mults: %d values", g_exitMoveMults.count);
     mqtt.sendLog(lb);
   }
 }
@@ -651,6 +661,8 @@ void runDeposit() {
 void runBaseExit() {
   mqtt.sendLog("base exit start");
   mqtt.sendState("EXIT_BASE");
+  g_exitTurnMults.reset();
+  g_exitMoveMults.reset();
 
   // Component Y-positions (mm from centre, +Y forward)
   const float CHASSIS_BACK_Y  = -CHASSIS_LENGTH / 2;
@@ -670,27 +682,27 @@ void runBaseExit() {
 
 
   // ── Leg 1: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG1_MM));
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG1_MM * g_exitMoveMults.next()));
   mqtt.sendLog("exit leg 1");
   waitForMotion(); if (killed) return;
 
   // ── Turn right 90 ──
-  motion.startTurn(1, TURN_SPEED, ticksForTurn(90*0.88));
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(90.0f * g_exitTurnMults.next()));
   mqtt.sendLog("exit turn right");
   waitForMotion(); if (killed) return;
 
   // ── Leg 2: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG2_MM*0.81*0.80));
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG2_MM * g_exitMoveMults.next()));
   mqtt.sendLog("exit leg 2");
   waitForMotion(); if (killed) return;
 
   // ── Turn left 90 ──
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90*0.98*1.17*0.92));
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90.0f * g_exitTurnMults.next()));
   mqtt.sendLog("exit turn left");
   waitForMotion(); if (killed) return;
 
   // ── Leg 3: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG3_MM*1.00));
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG3_MM * g_exitMoveMults.next()));
   mqtt.sendLog("exit leg 3");
   waitForMotion(); if (killed) return;
 
@@ -742,27 +754,27 @@ void runBaseExit() {
   if (!airlockAccepted) { mqtt.sendLog("exit: airlock denied"); return; }
 
   // ── Leg 4: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG4_MM*0.65));
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG4_MM * g_exitMoveMults.next()));
   mqtt.sendLog("exit leg 4");
   waitForMotion(); if (killed) return;
 
   // ── Turn left 90 ──
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90*1.13*0.96));
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90.0f * g_exitTurnMults.next()));
   mqtt.sendLog("exit turn left");
   waitForMotion(); if (killed) return;
 
   // ── Leg 5: forward ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG5_MM*1.00));
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG5_MM * g_exitMoveMults.next()));
   mqtt.sendLog("exit leg 5");
   waitForMotion(); if (killed) return;
 
   // ── Turn right 90 ──
-  motion.startTurn(1, TURN_SPEED, ticksForTurn(90*1.06*0.83));
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(90.0f * g_exitTurnMults.next()));
   mqtt.sendLog("exit turn right");
   waitForMotion(); if (killed) return;
 
   // ── Leg 6: forward (to tunnel entrance) ──
-  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG6_MM*0.7));
+  motion.startStraight(MOVE_SPEED, ticksForDistance(EXIT_LEG6_MM * g_exitMoveMults.next()));
   mqtt.sendLog("exit leg 6");
   waitForMotion(); if (killed) return;
 
@@ -1418,7 +1430,7 @@ void loop() {
       case ST_AVOID:       runAvoid();       break;
       case ST_DEPOSIT:     runDeposit();     break;
       case ST_RETURN_BASE: runReturnBase();  break;
-      case ST_EXIT_BASE:   runBaseExitLineFollow();    break;
+      case ST_EXIT_BASE:   runBaseExit();    break;
       case ST_REVIVE:      /* todo */        break;
       case ST_LET_IN:      /* todo */        break;
       case ST_TEST:        /* handled by callback */ break;

@@ -365,6 +365,12 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:OVERRIDE_AVOID_TURNS:'+document.getElementById('avoidMults').value)">Set Avoid</button>
       <input id="gridMults" value="1.0,1.0" class="num" style="width:100px" placeholder="grid">
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:OVERRIDE_GRID_TURNS:'+document.getElementById('gridMults').value)">Set Grid</button>
+      <span style="font-size:12px;color:var(--muted);font-weight:500;margin-left:8px;">Exit T:</span>
+      <input id="exitTurnMults" value="0.88,1.05,1.08,0.88" class="num" style="width:100px" placeholder="exit turns">
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:OVERRIDE_EXIT_TURNS:'+document.getElementById('exitTurnMults').value)">Set Exit Turns</button>
+      <span style="font-size:12px;color:var(--muted);font-weight:500;">Exit M:</span>
+      <input id="exitMoveMults" value="1.0,0.65,1.0,0.65,1.0,0.7" class="num" style="width:100px" placeholder="exit moves">
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:OVERRIDE_EXIT_MOVES:'+document.getElementById('exitMoveMults').value)">Set Exit Moves</button>
     </div>
   </div>
 
