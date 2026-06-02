@@ -62,6 +62,7 @@ void pollEncoders() {
 static EMA udsLFilter(0.2f), udsMFilter(0.2f), udsRFilter(0.2f);
 float filteredUdsL, filteredUdsM, filteredUdsR;
 volatile bool killed = false;
+bool motorsRunning = false;
 
 // ── State Machine ───────────────────────────────────────────
 enum State {
