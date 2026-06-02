@@ -296,7 +296,7 @@ void onMqttTestCommand(const String& cmd) {
   else if (cmd.startsWith("MOVE_TURN")) {
     int mm = 250, deg = 0;
     sscanf(cmd.c_str(), "MOVE_TURN:%d,%d", &mm, &deg);
-    mqtt.sendLog(String("move_turn: ") + mm + "mm, " + deg + "deg");
+    char _mt[64]; snprintf(_mt, sizeof(_mt), "move_turn: %dmm, %ddeg", mm, deg); mqtt.sendLog(_mt);
     motion.startStraight(MOVE_SPEED, ticksForDistance(mm));
     waitForMotion(); if (killed) return;
     if (deg != 0) {
