@@ -521,8 +521,8 @@ void runAvoid() {
   motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * g_avoidMults.next())));
   waitForMotion(); if (killed) return;
 
-  mqtt.sendLog("avoid: forward 3");
-  driveDist(ticksForDistance(HOLE_SPACING_MM * 3)); if (killed) return;
+  mqtt.sendLog("avoid: forward 2");
+  driveDist(ticksForDistance(HOLE_SPACING_MM * 2)); if (killed) return;
 
   mqtt.sendLog("avoid: turn left");
   motion.startTurn(-1, TURN_SPEED, ticksForTurn((long)(90.0f * g_avoidMults.next())));
