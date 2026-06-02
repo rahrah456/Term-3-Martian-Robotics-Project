@@ -91,7 +91,7 @@ const int PIN_ACT_LED  = 39;    // HIGH = red (stopped), LOW = green (running)
 // ── Arena Constants ─────────────────────────────────────────
 const float ARENA_SIZE_MM = 2500.0;
 const int   GRID_HOLES    = 9;           // 9×9 grid
-const float HOLE_SPACING_MM = 250.0;
+const float HOLE_SPACING_MM = 238.0;
 const float HOLE_DIAMETER_MM = 22.0;
 
 // Offset from base origin to arena corner, in mm
