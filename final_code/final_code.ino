@@ -643,12 +643,12 @@ void runAvoid() {
   setMotors(mc, 0, 0);
   delay(1000);
 
-  // ── Phase 3: rotate 30° CW, drive 40cm, then sweep search for IR line ──
+  // ── Phase 3: rotate 30° CW, drive 50cm, then sweep search for IR line ──
   mqtt.sendLog("avoid: phase 3 turn");
   motion.startTurn(1, TURN_SPEED, ticksForTurn(30));
   waitForMotion(); if (killed) return;
   mqtt.sendLog("avoid: phase 3 drive");
-  driveDist(ticksForDistance(75.0f)); if (killed) return;
+  driveDist(ticksForDistance(50.0f)); if (killed) return;
   delay(500);
   mqtt.sendLog("avoid: phase 3 sweep");
   phaseStart = millis();
@@ -657,7 +657,7 @@ void runAvoid() {
   sweepToggle = millis();
   sweepDir = 1;
   bool lineFound = false;
-  setMotors(mc, 300, 300);
+  setMotors(mc, 400, 400);
   while (millis() - phaseStart < 20000) {
     unsigned long now = micros();
     if (now - encLast >= 500) { encLast = now; pollEncoders(); }
@@ -666,34 +666,14 @@ void runAvoid() {
     filteredUdsL = udsLFilter.update((float)uds.distances[UDSManager::LEFT]);
     filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
     filteredUdsR = udsRFilter.update((float)uds.distances[UDSManager::RIGHT]);
-    if (millis() - sweepToggle >= 400) { sweepToggle = millis(); sweepDir = -sweepDir; setMotors(mc, 200 + sweepDir * 150, 200 - sweepDir * 150); }
+    if (millis() - sweepToggle >= 400) { sweepToggle = millis(); sweepDir = -sweepDir; setMotors(mc, 300 + sweepDir * 200, 300 - sweepDir * 200); }
     readIR(irVals);
     irCentroidVal = irCentroid(irVals);
     if (millis() - lastPub >= 200) { lastPub = millis(); mqtt.sendSensorSnapshot(irVals, irCentroidVal, (long)filteredUdsL, (long)filteredUdsM, (long)filteredUdsR, imuData.headingDeg, lightVal); }
     if (irCentroidVal >= 0) {
-      mqtt.sendLog("avoid: centering on line");
-      long lfStartL = encL, lfStartR = encR;
-      long lfTarget = ticksForDistance(100);
-      unsigned long lfDeadline = millis() + 5000;
-      setMotors(mc, 300, 300);
-      while (millis() < lfDeadline) {
-        unsigned long _n = micros();
-        if (_n - encLast >= 500) { encLast = _n; pollEncoders(); }
-        if (millis() - checkLast >= 5) { checkLast = millis(); mqtt.loop(); handleEStop(); if (killed) { setMotors(mc, 0, 0); return; } }
-        readIR(irVals); irCentroidVal = irCentroid(irVals);
-        if (millis() - lastPub >= 200) { lastPub = millis(); mqtt.sendSensorSnapshot(irVals, irCentroidVal, (long)filteredUdsL, (long)filteredUdsM, (long)filteredUdsR, imuData.headingDeg, lightVal); }
-        if (irCentroidVal < 0) break;
-        long avgEnc = (abs(encL - lfStartL) + abs(encR - lfStartR)) / 2;
-        if (avgEnc >= lfTarget) { setMotors(mc, 0, 0); lineFound = true; break; }
-        int err = irCentroidVal - 4000;
-        int corr = constrain((int)(err * 0.5f), -80, 80);
-        setMotors(mc, 300 + corr, 300 - corr);
-        { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
-      }
-      if (lineFound) break;
-      mqtt.sendLog("avoid: centering failed, resuming sweep");
-      setMotors(mc, 200 + sweepDir * 150, 200 - sweepDir * 150);
-      continue;
+      mqtt.sendLog("avoid: line found");
+      lineFound = true;
+      break;
     }
     { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
   }
