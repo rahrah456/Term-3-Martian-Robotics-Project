@@ -341,7 +341,7 @@ void onMqttTestCommand(const String& cmd) {
     if (imuData.ok) readIMU(imuData);
     pollEncoders();
     state = ST_TEST;
-    runBaseExit();
+    runBaseExitLineFollow();
     state = ST_IDLE;
     mqtt.sendLog("base exit done");
   }
@@ -845,6 +845,193 @@ void runBaseExit() {
   mqtt.sendLog("base exit done");
 }
 
+// ── Base Exit — Line Follow (creep + correct) ─────────────────
+// Moves 10cm at a time, reads IR centroid, corrects heading.
+// Detects T-junctions and turns (left/right) via IR activation patterns.
+// Path: start → T (right) → left turn → RFID → left turn → right turn → door.
+
+void runBaseExitLineFollow() {
+  mqtt.sendLog("base exit lf start");
+  mqtt.sendState("EXIT_BASE");
+
+  const int   CREEP_SPEED     = 400;
+  const long  STEP_TICKS      = ticksForDistance(100.0f);
+  const int   CORR_SPEED      = 300;
+  const float CORR_GAIN       = 8.0f;
+  const int   IR_THRESH       = 200;
+  const int   T_SENSOR_CNT    = 7;
+  const int   TURN_SENSOR_CNT = 5;
+
+  // Intersection types: 0=none, -1=left, 1=right, 2=T
+  auto intersectionType = [&]() -> int {
+    readIR(irVals);
+    int l = 0, c = 0, r = 0;
+    for (int i = 0; i < 3; i++) if (irVals[i] > IR_THRESH) l++;
+    for (int i = 3; i < 6; i++) if (irVals[i] > IR_THRESH) c++;
+    for (int i = 6; i < 9; i++) if (irVals[i] > IR_THRESH) r++;
+    int t = l + c + r;
+    if (t >= T_SENSOR_CNT && l >= 2 && c >= 2 && r >= 2) return 2;
+    if (t >= TURN_SENSOR_CNT && l >= 2 && r < 2)        return -1;
+    if (t >= TURN_SENSOR_CNT && r >= 2 && l < 2)        return 1;
+    return 0;
+  };
+
+  // Creep forward one step, then correct heading based on centroid
+  auto creepStep = [&]() -> bool {
+    motion.startStraight(CREEP_SPEED, STEP_TICKS);
+    waitForMotion(); if (killed) return false;
+    readIR(irVals);
+    int c = irCentroid(irVals);
+    if (c >= 0) {
+      float err = (c - 4000.0f) / 4000.0f;
+      float ang = fabs(err) * CORR_GAIN;
+      if (ang >= 2.0f) {
+        motion.startTurn(err > 0 ? 1 : -1, CORR_SPEED, ticksForTurn(ang));
+        waitForMotion(); if (killed) return false;
+      }
+    }
+    return true;
+  };
+
+  // ── Leg 1: Forward to T-junction ──
+  mqtt.sendLog("lf leg1 T");
+  while (true) {
+    if (!creepStep()) return;
+    if (intersectionType() == 2) break;
+  }
+  mqtt.sendLog("lf leg1 turn R");
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
+  waitForMotion(); if (killed) return;
+
+  // ── Leg 2: Forward to left turn ──
+  mqtt.sendLog("lf leg2 left");
+  while (true) {
+    if (!creepStep()) return;
+    if (intersectionType() == -1) break;
+  }
+  mqtt.sendLog("lf leg2 turn L");
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90));
+  waitForMotion(); if (killed) return;
+
+  // ── Leg 3: Forward scanning RFID ──
+  mqtt.sendLog("lf leg3 RFID");
+  {
+    bool tagFound = false;
+    for (int step = 0; step < 15 && !tagFound; step++) {
+      if (!creepStep()) return;
+      if (readRFID(rfidBuf, sizeof(rfidBuf))) { tagFound = true; break; }
+    }
+    // Try reversing if not found
+    for (int step = 0; step < 8 && !tagFound; step++) {
+      motion.startStraight(-CREEP_SPEED, STEP_TICKS);
+      waitForMotion(); if (killed) return;
+      if (readRFID(rfidBuf, sizeof(rfidBuf))) { tagFound = true; break; }
+    }
+    if (!tagFound) { mqtt.sendLog("lf leg3 no RFID"); return; }
+    mqtt.sendLog("lf leg3 RFID found");
+  }
+
+  // ── Airlock request ──
+  mqtt.sendLog("lf airlock request");
+  airlockAccepted = false;
+  mqtt.sendAirlockRequest("A", rfidBuf);
+  {
+    unsigned long _e = micros(), _c = millis(), _w = millis();
+    while (millis() - _w < 15000) {
+      if (micros() - _e >= 500) { _e = micros(); pollEncoders(); }
+      if ((long)(millis() - _c) >= 5) { _c = millis(); mqtt.loop(); handleEStop(); if (killed) return; }
+      if (airlockAccepted) break;
+      if ((millis() - _w) > 2000 && (millis() - _w) % 2000 < 25)
+        mqtt.sendAirlockRequest("A", rfidBuf);
+    }
+  }
+  if (!airlockAccepted) { mqtt.sendLog("lf airlock denied"); return; }
+
+  // ── Leg 4: Forward to left turn ──
+  mqtt.sendLog("lf leg4 left");
+  while (true) {
+    if (!creepStep()) return;
+    if (intersectionType() == -1) break;
+  }
+  mqtt.sendLog("lf leg4 turn L");
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90));
+  waitForMotion(); if (killed) return;
+
+  // ── Leg 5: Forward to right turn ──
+  mqtt.sendLog("lf leg5 right");
+  while (true) {
+    if (!creepStep()) return;
+    if (intersectionType() == 1) break;
+  }
+  mqtt.sendLog("lf leg5 turn R");
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
+  waitForMotion(); if (killed) return;
+
+  // ── Leg 6: Forward to tunnel door ──
+  mqtt.sendLog("lf leg6 to door");
+  for (int i = 0; i < 5; i++) {
+    if (!creepStep()) return;
+  }
+
+  // ── Wait for tunnel door ──
+  delay(3000);
+
+  // ── Enter tunnel: CENTRE_TUNNEL (same as original) ──
+  float exitPitchRef = imuData.pitch;
+  bool pitchChanged = false;
+  mqtt.sendLog("lf entering tunnel");
+  motion.startTunnelCentre(660, pidKp, pidMaxDiff);
+  while (true) {
+    mqtt.loop();
+    if (handleEStop()) { motion.stop(); setMotors(mc, 0, 0); waitForUnkill(); return; }
+    pollEncoders();
+    uds.tick();
+    filteredUdsL = udsLFilter.update((float)uds.distances[UDSManager::LEFT]);
+    filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+    filteredUdsR = udsRFilter.update((float)uds.distances[UDSManager::RIGHT]);
+    if (imuData.ok) readIMU(imuData);
+
+    int mr = motion.tick(mc, -1, filteredUdsM, filteredUdsL, filteredUdsR);
+    if (mr != MotionSM::RUNNING) break;
+
+    if (filteredUdsM < 10.0f) { motion.stop(); setMotors(mc, 0, 0); break; }
+    { unsigned long _d = micros() + 20000, _e = micros(); while (micros() < _d) { if (micros() - _e >= 500) { _e = micros(); pollEncoders(); } } }
+  }
+
+  // ── Wait for second door to open ──
+  mqtt.sendLog("lf waiting for second door");
+  {
+    unsigned long _dw = millis();
+    { unsigned long _d = micros() + 20000, _e = micros(); while (micros() < _d) { if (micros() - _e >= 500) { _e = micros(); pollEncoders(); } } }
+    while (millis() - _dw < 15000) {
+      { unsigned long _d = micros() + 20000, _e = micros(); while (micros() < _d) { if (micros() - _e >= 500) { _e = micros(); pollEncoders(); } } }
+      mqtt.loop(); handleEStop(); if (killed) return;
+      uds.tick();
+      filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+      if (filteredUdsM > 17.0f) break;
+    }
+  }
+
+  // ── Continue until gravity normalises ──
+  mqtt.sendLog("lf continuing past tunnel");
+  setMotors(mc, 660, 660);
+  {
+    unsigned long _ps = millis();
+    while (millis() - _ps < 30000) {
+      { unsigned long _d = micros() + 20000, _e = micros(); while (micros() < _d) { if (micros() - _e >= 500) { _e = micros(); pollEncoders(); } } }
+      mqtt.loop();
+      if (handleEStop()) { setMotors(mc, 0, 0); waitForUnkill(); return; }
+      if (imuData.ok) readIMU(imuData);
+      if (!mqtt.isEffectivelyEnabled()) { setMotors(mc, 0, 0); return; }
+      float pd = fabsf(imuData.pitch - exitPitchRef);
+      if (pd > 8.0f) pitchChanged = true;
+      if (pitchChanged && pd < 3.0f) break;
+    }
+  }
+  setMotors(mc, 0, 0);
+  mqtt.sendLog("base exit lf done");
+}
+
 // ── Grid Navigation + Dead Reckoning ────────────────────────
 // Shared helper: drive a distance at a given heading, scanning for RFID.
 // Returns true if an RFID tag was found (and snaps pose via server reply).
@@ -1188,7 +1375,7 @@ void loop() {
       case ST_AVOID:       runAvoid();       break;
       case ST_DEPOSIT:     runDeposit();     break;
       case ST_RETURN_BASE: runReturnBase();  break;
-      case ST_EXIT_BASE:   runBaseExit();    break;
+      case ST_EXIT_BASE:   runBaseExitLineFollow();    break;
       case ST_REVIVE:      /* todo */        break;
       case ST_LET_IN:      /* todo */        break;
       case ST_TEST:        /* handled by callback */ break;
