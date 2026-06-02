@@ -482,7 +482,11 @@ void runDeposit() {
     delay(200);
   }
 
-  // ── 2. Move forward until RFID tag detected ───────────────
+  // ── 2. Move forward ~6cm, then scan for RFID tag ─────────
+  mqtt.sendLog("deposit: advancing 6cm");
+  motion.startStraight(MOVE_SPEED, ticksForDistance(60));
+  waitForMotion(); if (killed) return;
+
   mqtt.sendLog("deposit: searching for tag");
   unsigned long moveStart = millis();
   bool tagFound = false;
