@@ -434,7 +434,8 @@ void dispenseSeed(Servo& servo, int position) {
 }
 
 void dispenseNextSeed(Servo& servo) {
-  if (g_seedIdx < 1 || g_seedIdx >= SEED_COUNT) return;
+  if (g_seedIdx >= SEED_COUNT) return;
+  if (g_seedIdx < 1) g_seedIdx = 1;  // reset from locked state (0)
   servo.write(SEED_ANGLES[g_seedIdx]);
   g_seedIdx++;
   if (g_seedIdx >= SEED_COUNT) g_seedIdx = SEED_COUNT - 1;
