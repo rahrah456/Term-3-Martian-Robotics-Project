@@ -249,8 +249,8 @@ struct MotionSM {
           }
           float correction = -kp * prevErr; 
           correction = constrain(correction, -(float)maxDiff, (float)maxDiff);
-          int left  = constrain(baseSpeed + (int)correction, MOTOR_MIN, MOTOR_MAX);
-          int right = constrain(baseSpeed - (int)correction, MOTOR_MIN, MOTOR_MAX);
+          int left  = constrain(baseSpeed + (int)correction, 0, MOTOR_MAX);
+          int right = constrain(baseSpeed - (int)correction, 0, MOTOR_MAX);
           holdL = left; holdR = right;
           setMotors(mc, left, right);
           return RUNNING;
@@ -270,8 +270,8 @@ struct MotionSM {
 
         float correction = -kp * error + ki * integral + kd * deriv;
         correction = constrain(correction, -(float)maxDiff, (float)maxDiff);
-        int left  = constrain(baseSpeed + (int)correction, MOTOR_MIN, MOTOR_MAX);
-        int right = constrain(baseSpeed - (int)correction, MOTOR_MIN, MOTOR_MAX);
+        int left  = constrain(baseSpeed + (int)correction, 0, MOTOR_MAX);
+        int right = constrain(baseSpeed - (int)correction, 0, MOTOR_MAX);
         holdL = left; holdR = right;
         setMotors(mc, left, right);
         return RUNNING;

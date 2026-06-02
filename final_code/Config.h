@@ -16,7 +16,7 @@ const int PIN_ENC_RA = 2;   // right track encoder
 const int PIN_ENC_RB = 3;
 
 const float TRACK_BASE_MM = 161.0;  // distance between tread centres
-const int MOTOR_MIN = 0;           // below this, friction wins
+const int MOTOR_MIN = 250;           // below this, friction wins
 const int MOTOR_MAX = 660;           // absolute ceiling
 const int STEERING_MAX_DIFF = 80;    // max differential for line/wall follow
 
