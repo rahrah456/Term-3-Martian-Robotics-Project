@@ -461,13 +461,13 @@ function update(d) {
   document.getElementById('centroid').textContent = d.centroid;
   document.getElementById('uds').textContent = d.uds.join(' / ') + ' cm';
 
-  // IR bar — each sensor gets a column with bar + value label underneath
+  // IR bar (mirrored: leftmost sensor is on the right side)
   const bar = document.getElementById('irBar');
   const wrapper = bar.parentElement;
   bar.innerHTML = '';
   const vals = d.ir || [];
   let maxV = -1, maxI = -1;
-  for (let i = 0; i < 9; i++) {
+  for (let i = 8; i >= 0; i--) {
     let v = vals[i] || 0;
     if (v > maxV) { maxV = v; maxI = i; }
 
@@ -494,8 +494,9 @@ function update(d) {
     if (activeIdx < 0) activeIdx = 0;
     if (activeIdx > 8) activeIdx = 8;
   }
-  if (activeIdx >= 0 && bar.children[activeIdx]) {
-    bar.children[activeIdx].children[0].classList.add('active');
+  let mirIdx = 8 - activeIdx;
+  if (mirIdx >= 0 && bar.children[mirIdx]) {
+    bar.children[mirIdx].children[0].classList.add('active');
   }
   // Centroid caret (▼) at the interpolated position inside the wrapper
   let caret = document.getElementById('irCaret');
@@ -506,7 +507,7 @@ function update(d) {
     wrapper.appendChild(caret);
   }
   if (d.centroid >= 0) {
-    const pct = (d.centroid / 8000) * 100;
+    const pct = ((8000 - d.centroid) / 8000) * 100;
     caret.textContent = '\u25bc';
     caret.style.left = pct + '%';
   } else {
