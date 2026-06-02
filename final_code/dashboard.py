@@ -292,6 +292,55 @@ HTML_PAGE = r"""<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- Log -->
+  <div class="card">
+    <h2>Log</h2>
+    <div class="log-box" id="logBox"></div>
+  </div>
+
+  <!-- PID Tuning -->
+  <div class="card">
+    <h2>PID Tuning &amp; Tests</h2>
+    <div class="ctrl-row">
+      <input id="consoleInput" type="text" placeholder="Send any command&hellip;"
+             onkeydown="if(event.key==='Enter'){sendCmd(this.value);this.value=''}">
+      <button class="btn btn-small btn-secondary" onclick="sendCmd(consoleInput.value);consoleInput.value=''">Send</button>
+      <span style="font-size:14px;color:var(--muted);cursor:pointer;font-weight:600;" onclick="toggleCheat()">?</span>
+    </div>
+    <div class="cheatsheet" id="cheat">
+      <b>Console commands:</b><br>
+      ENABLE &nbsp; DISABLE &nbsp; DEPOSIT &nbsp; EXIT_BASE<br>
+      MOTOR:L,&lt;speed&gt;,&lt;ms&gt; &nbsp; MOTOR:R,&lt;speed&gt;,&lt;ms&gt;<br>
+      MOTOR:BOTH,&lt;speed&gt;,&lt;ms&gt; &nbsp; MOTOR:STOP<br>
+      TEST:FOLLOW_LINE:&lt;base&gt;,&lt;kp&gt;,&lt;ki&gt;,&lt;kd&gt;,&lt;md&gt;<br>
+      TEST:FOLLOW_WALL:&lt;base&gt;,&lt;side&gt;,&lt;targetCm&gt;,&lt;kp&gt;,&lt;ki&gt;,&lt;kd&gt;,&lt;md&gt;<br>
+      &lt;key&gt;:&lt;val&gt; &nbsp; (kp, ki, kd, md)
+    </div>
+    <div class="ctrl-row">
+      <label>kp:</label><input id="kp" value="0.5" class="num" onchange="sendPid('kp',this.value)">
+      <label>ki:</label><input id="ki" value="0.0" class="num" onchange="sendPid('ki',this.value)">
+      <label>kd:</label><input id="kd" value="0.0" class="num" onchange="sendPid('kd',this.value)">
+      <label>md:</label><input id="md" value="40" class="num" onchange="sendPid('md',this.value)">
+    </div>
+    <div class="ctrl-row">
+      <span style="font-size:12px;color:var(--muted);font-weight:500;">Tests:</span>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:FOLLOW_LINE:500,'+getPidStr())">Follow Line</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:FOLLOW_WALL:500,1,8.0,'+getWallPidStr())">Follow Wall (R, 8cm)</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:DEPOSIT')">Deposit</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:EXIT_BASE')">Exit Base</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:REVIVE')">Revive</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:GRID_NAV')">Grid Nav</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:GRID_NAV_NOLINES')">Grid Nav (no lines)</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:OBSTACLE_AVOIDANCE')">Obstacle Avoidance</button>
+      <input id="moveMm" value="250" class="num" style="width:60px" placeholder="mm">
+      <input id="turnDeg" value="90" class="num" style="width:50px" placeholder="°">
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:MOVE_TURN:'+document.getElementById('moveMm').value+','+document.getElementById('turnDeg').value)">Move+Turn</button>
+      <span style="font-size:12px;color:var(--muted);font-weight:500;">Turn mults:</span>
+      <input id="gridMults" value="1.0,1.0" class="num" style="width:100px" placeholder="grid">
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:OVERRIDE_GRID_TURNS:'+document.getElementById('gridMults').value)">Set Grid</button>
+    </div>
+  </div>
+
   <!-- Map -->
   <div class="card">
     <h2>Map</h2>
@@ -358,55 +407,6 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('MOTOR:BOTH,-'+leftSpeed.value+','+'-'+rightSpeed.value+','+motorDur.value)">Both REV</button>
       <button class="btn btn-small btn-danger" onclick="sendCmd('MOTOR:STOP')">&cross; STOP ALL</button>
     </div>
-  </div>
-
-  <!-- PID Tuning -->
-  <div class="card full">
-    <h2>PID Tuning &amp; Tests</h2>
-    <div class="ctrl-row">
-      <input id="consoleInput" type="text" placeholder="Send any command&hellip;"
-             onkeydown="if(event.key==='Enter'){sendCmd(this.value);this.value=''}">
-      <button class="btn btn-small btn-secondary" onclick="sendCmd(consoleInput.value);consoleInput.value=''">Send</button>
-      <span style="font-size:14px;color:var(--muted);cursor:pointer;font-weight:600;" onclick="toggleCheat()">?</span>
-    </div>
-    <div class="cheatsheet" id="cheat">
-      <b>Console commands:</b><br>
-      ENABLE &nbsp; DISABLE &nbsp; DEPOSIT &nbsp; EXIT_BASE<br>
-      MOTOR:L,&lt;speed&gt;,&lt;ms&gt; &nbsp; MOTOR:R,&lt;speed&gt;,&lt;ms&gt;<br>
-      MOTOR:BOTH,&lt;speed&gt;,&lt;ms&gt; &nbsp; MOTOR:STOP<br>
-      TEST:FOLLOW_LINE:&lt;base&gt;,&lt;kp&gt;,&lt;ki&gt;,&lt;kd&gt;,&lt;md&gt;<br>
-      TEST:FOLLOW_WALL:&lt;base&gt;,&lt;side&gt;,&lt;targetCm&gt;,&lt;kp&gt;,&lt;ki&gt;,&lt;kd&gt;,&lt;md&gt;<br>
-      &lt;key&gt;:&lt;val&gt; &nbsp; (kp, ki, kd, md)
-    </div>
-    <div class="ctrl-row">
-      <label>kp:</label><input id="kp" value="0.5" class="num" onchange="sendPid('kp',this.value)">
-      <label>ki:</label><input id="ki" value="0.0" class="num" onchange="sendPid('ki',this.value)">
-      <label>kd:</label><input id="kd" value="0.0" class="num" onchange="sendPid('kd',this.value)">
-      <label>md:</label><input id="md" value="40" class="num" onchange="sendPid('md',this.value)">
-    </div>
-    <div class="ctrl-row">
-      <span style="font-size:12px;color:var(--muted);font-weight:500;">Tests:</span>
-      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:FOLLOW_LINE:500,'+getPidStr())">Follow Line</button>
-      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:FOLLOW_WALL:500,1,8.0,'+getWallPidStr())">Follow Wall (R, 8cm)</button>
-      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:DEPOSIT')">Deposit</button>
-      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:EXIT_BASE')">Exit Base</button>
-      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:REVIVE')">Revive</button>
-      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:GRID_NAV')">Grid Nav</button>
-      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:GRID_NAV_NOLINES')">Grid Nav (no lines)</button>
-      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:OBSTACLE_AVOIDANCE')">Obstacle Avoidance</button>
-      <input id="moveMm" value="250" class="num" style="width:60px" placeholder="mm">
-      <input id="turnDeg" value="90" class="num" style="width:50px" placeholder="°">
-      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:MOVE_TURN:'+document.getElementById('moveMm').value+','+document.getElementById('turnDeg').value)">Move+Turn</button>
-      <span style="font-size:12px;color:var(--muted);font-weight:500;">Turn mults:</span>
-      <input id="gridMults" value="1.0,1.0" class="num" style="width:100px" placeholder="grid">
-      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:OVERRIDE_GRID_TURNS:'+document.getElementById('gridMults').value)">Set Grid</button>
-    </div>
-  </div>
-
-  <!-- Log -->
-  <div class="card full">
-    <h2>Log</h2>
-    <div class="log-box" id="logBox"></div>
   </div>
 </div>
 
