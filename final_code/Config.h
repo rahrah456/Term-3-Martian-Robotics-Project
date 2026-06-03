@@ -28,8 +28,8 @@ const int IR_EMITTER_2 = 41;
 const int IR_TIMEOUT_US = 2500;
 
 // Calibrated min/max from trial1_demo
-const uint16_t IR_MINS[9] = { 57, 31, 29, 26, 36, 44, 58, 81, 111 };
-const uint16_t IR_MAXS[9] = { 1577, 1173, 1067, 946, 946, 974, 998, 1173, 1501 };
+const uint16_t IR_MINS[9] = { 23, 1, 1, 7, 16, 26, 36, 57, 86 };
+const uint16_t IR_MAXS[9] = { 1106, 777, 663, 562, 553, 556, 548, 615, 771 };
 
 // ── Component Positions (mm from robot centre, +X=right, +Y=forward) ──
 const float POS_LIGHT_SENSOR_X = 45.0f,  POS_LIGHT_SENSOR_Y = 68.0f;
