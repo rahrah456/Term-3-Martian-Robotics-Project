@@ -800,6 +800,7 @@ void runBaseExit() {
     unsigned long enterMs = millis();
     unsigned long extremeMs = 0;
     bool lineLostFlagged = false;
+    unsigned long lineLostMs = 0;
     float integral = 0;
     unsigned long _snapLast = 0;
     unsigned long _encLast = micros();
@@ -840,18 +841,19 @@ void runBaseExit() {
 
       // Corner detection (skip first 300ms after start/RFID resume)
       if (millis() - enterMs > 300) {
-        // Primary: ≥5 sensors active = perpendicular line spans array
+        // Primary: ≥7 sensors active = perpendicular line spans array
         int active = 0;
         for (int i = 0; i < IR_COUNT; i++)
-          if (irVals[i] > 500) active++;
-        if (active >= 5) { setMotors(mc, 0, 0); return; }
+          if (irVals[i] > 600) active++;
+        if (active >= 8 && irVals[3] > 800 && irVals[4] > 800) { setMotors(mc, 0, 0); return; }
       }
 
-      // Line lost — sweep search for line
+      // Line lost — sweep search for line (max 5s)
       if (centroid < 0) {
-        if (!lineLostFlagged) { lineLostFlagged = true; mqtt.sendLog("exit: line lost"); }
-        int spinDir = ((millis() - enterMs) / 1000) % 2 == 0 ? 1 : -1;
-        setMotors(mc, spinDir * 400, -spinDir * 400);
+        if (!lineLostFlagged) { lineLostFlagged = true; lineLostMs = millis(); mqtt.sendLog("exit: line lost"); }
+        if (millis() - lineLostMs >= 5000) { setMotors(mc, 0, 0); return; }
+        int spinDir = ((millis() - lineLostMs) / 1000) % 2 == 0 ? 1 : -1;
+        setMotors(mc, spinDir * MOTOR_MAX, -spinDir * MOTOR_MAX);
         { unsigned long _encDeadline = micros() + 5000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
         continue;
       }
@@ -869,6 +871,13 @@ void runBaseExit() {
       }
 
       int base = baseSpeed;
+
+      // Straight-line correction: if both middle sensors lose the line, coast straight
+      if (irVals[3] < 500 && irVals[4] < 500) {
+        setMotors(mc, base, base);
+        { unsigned long _encDeadline = micros() + 5000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
+        continue;
+      }
 
       // PD
       float deriv = error - prevError;
@@ -890,39 +899,44 @@ void runBaseExit() {
     setMotors(mc, 0, 0);
   };
 
-  const float LF_KP = 2.0f;
+  const float LF_KP = 18.0f;
   const float LF_KD = 0.5f;
   const int   LF_MAX_DIFF = 250;
   const unsigned long LEG_TO = 10000;
 
   // ── Leg 1 ──
   mqtt.sendLog("exit leg 1");
-  followLeg(500, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(MOTOR_MAX, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
 
   delay(1000);
   // motion.startStraight(250, ticksForDistance(10));
   // waitForMotion(); if (killed) { state = ST_IDLE; return; }
-  motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(89));
   mqtt.sendLog("exit turn right");
   waitForMotion(); if (killed) { state = ST_IDLE; return; }
 
   // ── Leg 2 ──
   mqtt.sendLog("exit leg 2");
-  followLeg(500, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(MOTOR_MAX, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
 
   delay(1000);
   // motion.startStraight(250, ticksForDistance(10));
   // waitForMotion(); if (killed) { state = ST_IDLE; return; }
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90));
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn(89));
   mqtt.sendLog("exit turn left");
   waitForMotion(); if (killed) { state = ST_IDLE; return; }
 
   // ── Leg 3 ──
   mqtt.sendLog("exit leg 3");
-  followLeg(500, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(MOTOR_MAX, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
+
+  delay(1000);
+  motion.startTurn(-1, TURN_SPEED, ticksForTurn(89));
+  mqtt.sendLog("exit turn left");
+  waitForMotion(); if (killed) { state = ST_IDLE; return; }
 
   // ── Ask server to exit (commented out) ──
   // airlockAccepted = false;
@@ -940,34 +954,21 @@ void runBaseExit() {
   //   handleEStop(); if (killed) { state = ST_IDLE; return; }
   // }
   // if (!airlockAccepted) { mqtt.sendLog("exit: airlock denied"); state = ST_IDLE; return; }
-
-  // ── Leg 4 ──
-  mqtt.sendLog("exit leg 4");
-  followLeg(500, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
-  if (killed) { state = ST_IDLE; return; }
-
-  delay(1000);
-  // motion.startStraight(250, ticksForDistance(10));
-  // waitForMotion(); if (killed) { state = ST_IDLE; return; }
-  motion.startTurn(-1, TURN_SPEED, ticksForTurn(90));
-  mqtt.sendLog("exit turn left");
-  waitForMotion(); if (killed) { state = ST_IDLE; return; }
-
   // ── Leg 5 ──
   mqtt.sendLog("exit leg 5");
-  followLeg(500, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(MOTOR_MAX, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
 
   delay(1000);
   // motion.startStraight(250, ticksForDistance(10));
   // waitForMotion(); if (killed) { state = ST_IDLE; return; }
-  motion.startTurn(1, TURN_SPEED, ticksForTurn(90));
+  motion.startTurn(1, TURN_SPEED, ticksForTurn(89));
   mqtt.sendLog("exit turn right");
   waitForMotion(); if (killed) { state = ST_IDLE; return; }
 
   // ── Leg 6 ──
   mqtt.sendLog("exit leg 6");
-  followLeg(500, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(MOTOR_MAX, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
 
   // ── Tunnel traversal ──
@@ -975,7 +976,7 @@ void runBaseExit() {
   { unsigned long _ts = millis(); while (millis() - _ts < 3000) { mqtt.loop(); if (handleEStop()) { state = ST_IDLE; return; } delay(5); } }
 
   mqtt.sendLog("exit: tunnel start");
-  motion.startTunnelCentre(550, 2.0f, 80, 60000);
+  motion.startTunnelCentre(MOTOR_MAX, 2.0f, 80, 60000);
   {
     unsigned long _encLast = micros();
     unsigned long _checkLast = millis();
@@ -1004,7 +1005,7 @@ void runBaseExit() {
   } }
 
   mqtt.sendLog("exit: tunnel exit, 200mm");
-  motion.startTunnelCentre(550, 2.0f, 80, 30000);
+  motion.startTunnelCentre(MOTOR_MAX, 2.0f, 80, 30000);
   { long _encDoor = (abs(encL) + abs(encR)) / 2;
     long _targetTicks = ticksForDistance(200);
     unsigned long _encLast = micros();
