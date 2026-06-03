@@ -84,7 +84,7 @@ int irCentroid(const uint16_t vals[]) {
   uint32_t sum = 0, weighted = 0;
   for (uint8_t i = 0; i < IR_COUNT; i++) {
     uint16_t v = vals[i];
-    if (v > 50) {
+    if (v > 100) {
       sum += v;
       weighted += v * i * 1000;
     }
