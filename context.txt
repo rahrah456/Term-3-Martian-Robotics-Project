@@ -2,11 +2,13 @@ Use british english and make all code and comments look human written. Keep ever
 
 When we've exited the base, we enter the arena, we'll be slightly misaligned but near a node. We need to align ourselves forward and go to this node that should be like 10cm away. When we query the server for fertility, it will tell us the coordinates of that node. We don't know the orientation of the coordinate grid, so we have to figure it out on the fly.
 
-What we need to do is go near the back of the arena and try to plant on each of these holes. Once we've finished depositing our 5 seeds in fertile holes, we should return to the base. There is a slight change to the orgiinal rules
+What we need to do is go near the back of the arena and try to plant on each of these holes. Once we've finished depositing our 5 seeds in fertile holes, we should return to the base. There is a slight change to the original rules: to exit the base nobody needs to let us in — instead we use the node in front of the base exit and send that RFID to request entry from the server. We will NOT get other robot positions over WiFi — rely only on UDS for obstacle detection.
+
+Grid info: 9x9 grid of seed hole nodes 1-9, 1-9. Node above entrance: 9,3. Node above exit: 9,7. Ignore Map.h complexity — navigate using HOLE_SPACING_MM only.
 
 We will deadreckon betweeen holes and use our magnetometer and RFID sensor to know our absolute position.
 
-A friend will be working on base exit so don't touch that stuff, but he will need to use the heading from the magnetometer that we will be implementing back in.
+A friend will be working on base exit so don't touch that stuff, but he will need to use the heading from the magnetometer that we will be implementing back in. He changed the main loop() to 200Hz.
 
 git info: we are on a branch.
 
@@ -73,6 +75,18 @@ Key files:
 - secrets.h: WiFi/MQTT credentials (not tracked).
 
 Current branch: 'first' (for magnetometer re-integration).
+
+Usefulness of existing code:
+- Obstacle detection/avoidance: doesnt work.
+- Grid navigation (no-line and lined): unreliable but can use magnetometer heading now.
+- Base exit: unreliable but can use magnetometer heading now. RFID/server comms works perfectly. Tunnel centering and door detection need improvement.
+- Seed deposit: works perfectly (RFID, fertility check, positioning, dispensing) but can use magnetometer now.
+- Line following: not used in final demo.
+- Revive: works perfectly but can use magnetometer now.
+- Turning: unreliable. We can measure actual rotation using magnetometer AFTER each turn (motors and servo off) and correct.
+- Moving: reliable but mm-to-ticks conversion can be off. Use RFID tags to locate reliably.
+- Magnetometer code (archive/component_tests/magnetometer_spherical_fitted_heading/): very useful, accurate to ~1 degree. Apply EMA before the arctan function (not on the heading output because of degree wrapping).
+- Map.h: useless and overcomplicated. Navigate nodes based on HOLE_SPACING_MM only.
 
 Turn multipliers: TurnMultSet struct with separate sets for avoid, grid, and exit turns/moves, tuneable via dashboard MQTT commands (OVERRIDE_AVOID_TURNS, OVERRIDE_GRID_TURNS, OVERRIDE_EXIT_TURNS, OVERRIDE_EXIT_MOVES).
 
