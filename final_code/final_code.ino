@@ -816,6 +816,7 @@ void runBaseExit() {
     int lastErrorDir = 0;
     unsigned long enterMs = millis();
     unsigned long extremeMs = 0;
+    bool lineLostFlagged = false;
     unsigned long _encLast = micros();
     unsigned long _checkLast = millis();
 
@@ -859,11 +860,13 @@ void runBaseExit() {
 
       // Line lost — coast/pivot without triggering corner
       if (centroid < 0) {
+        if (!lineLostFlagged) { lineLostFlagged = true; mqtt.sendLog("exit: line lost"); }
         if (lastErrorDir != 0)
           setMotors(mc, lastErrorDir * 200, -lastErrorDir * 200);
         { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
         continue;
       }
+      lineLostFlagged = false;
 
       float error = (float)centroid - 4000.0f;
       float absErr = fabsf(error);

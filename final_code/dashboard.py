@@ -262,6 +262,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
   .hole-cell.fertile { background: var(--amber-soft); color: var(--amber); }
   .hole-cell.empty { background: #eef1f3; color: #bbb; }
   .cheatsheet { display: none; background: #fbfcfd; border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; font-size: 12px; color: var(--muted); line-height: 1.8; margin-bottom: 8px; }
+  .gyro-card { display: flex; flex-direction: column; align-items: center; }
+  .gyro-canvas { width: 100%; max-width: 180px; aspect-ratio: 1; display: block; }
   .cheatsheet b { color: var(--ink); }
   @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .app-header { flex-direction: column; align-items: stretch; gap: 12px; padding: 18px; } }
 </style>
@@ -278,18 +280,22 @@ HTML_PAGE = r"""<!DOCTYPE html>
   <!-- State -->
   <div class="card">
     <h2>Status</h2>
-    <table>
-      <tr><th>State</th><td><span id="state" class="badge badge-yellow">--</span></td></tr>
-      <tr><th>Position</th><td id="pos">--, --</td></tr>
-      <tr><th>Heading</th><td id="heading">--&deg;</td></tr>
-      <tr><th>Centroid</th><td id="centroid">--</td></tr>
-      <tr><th>UDS</th><td id="uds">-- / -- / --</td></tr>
-    </table>
-    <div class="ctrl-row">
-      <button class="btn btn-primary" onclick="sendCmd('ENABLE')">ENABLE</button>
-      <button class="btn btn-secondary" onclick="sendCmd('DISABLE')">DISABLE</button>
-      <button class="btn btn-small btn-secondary" onclick="sendCmd('HEADING:0')" style="margin-top:4px;">Reset Heading</button>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+      <span id="state" class="badge badge-yellow">--</span>
+      <span style="font-size:13px;color:var(--muted);">pos: <span id="pos">--,--</span></span>
+      <span style="font-size:13px;color:var(--muted);">h: <span id="heading">--&deg;</span></span>
+      <span style="font-size:13px;color:var(--muted);">c: <span id="centroid">--</span></span>
+      <span style="font-size:13px;color:var(--muted);">UDS: <span id="uds">--/--/--</span></span>
+      <button class="btn btn-small btn-primary" onclick="sendCmd('ENABLE')">ENABLE</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('DISABLE')">DISABLE</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('HEADING:0')">Reset H</button>
     </div>
+  </div>
+
+  <!-- Gyro Compass -->
+  <div class="card gyro-card">
+    <h2>Gyro</h2>
+    <canvas id="gyroCanvas" class="gyro-canvas" width="360" height="360"></canvas>
   </div>
 
   <!-- Log -->
@@ -545,6 +551,84 @@ function update(d) {
     caret.textContent = '';
   }
   document.getElementById('irLabel').textContent = d.centroid >= 0 ? d.centroid : '--';
+
+  // Gyro compass
+  const gCanvas = document.getElementById('gyroCanvas');
+  const gCtx = gCanvas.getContext('2d');
+  const gW = gCanvas.width, gH = gCanvas.height;
+  const gCx = gW / 2, gCy = gH / 2, gR = gW * 0.42;
+  gCtx.clearRect(0, 0, gW, gH);
+  const gHeading = d.pose.heading || 0;
+  const gRad = gHeading * Math.PI / 180;
+
+  // Outer ring
+  gCtx.strokeStyle = '#172026';
+  gCtx.lineWidth = 2;
+  gCtx.beginPath();
+  gCtx.arc(gCx, gCy, gR, 0, Math.PI * 2);
+  gCtx.stroke();
+
+  // Tick marks and labels
+  for (let i = 0; i < 360; i += 30) {
+    const a = i * Math.PI / 180 - Math.PI / 2;
+    const len = (i % 90 === 0) ? 14 : (i % 30 === 0 ? 8 : 0);
+    if (len === 0) continue;
+    const r1 = gR - 2;
+    const r2 = gR - 2 - len;
+    gCtx.strokeStyle = (i % 90 === 0) ? '#172026' : '#63707a';
+    gCtx.lineWidth = (i % 90 === 0) ? 2 : 1;
+    gCtx.beginPath();
+    gCtx.moveTo(gCx + r1 * Math.cos(a), gCy + r1 * Math.sin(a));
+    gCtx.lineTo(gCx + r2 * Math.cos(a), gCy + r2 * Math.sin(a));
+    gCtx.stroke();
+    // Cardinal labels
+    if (i % 90 === 0) {
+      const labelR = gR - 20;
+      const label = ['N', 'E', 'S', 'W'][i / 90];
+      gCtx.fillStyle = '#172026';
+      gCtx.font = 'bold 16px sans-serif';
+      gCtx.textAlign = 'center';
+      gCtx.textBaseline = 'middle';
+      gCtx.fillText(label, gCx + labelR * Math.cos(a), gCy + labelR * Math.sin(a));
+    }
+  }
+
+  // Rotating ring (inner)
+  gCtx.strokeStyle = '#d7dde2';
+  gCtx.lineWidth = 1;
+  gCtx.beginPath();
+  gCtx.arc(gCx, gCy, gR * 0.7, 0, Math.PI * 2);
+  gCtx.stroke();
+
+  // Needle
+  gCtx.save();
+  gCtx.translate(gCx, gCy);
+  gCtx.rotate(gRad);
+  gCtx.fillStyle = '#246b9f';
+  gCtx.beginPath();
+  gCtx.moveTo(0, -gR * 0.85);
+  gCtx.lineTo(-6, gR * 0.1);
+  gCtx.lineTo(0, gR * 0.15);
+  gCtx.lineTo(6, gR * 0.1);
+  gCtx.closePath();
+  gCtx.fill();
+  gCtx.strokeStyle = '#172026';
+  gCtx.lineWidth = 1;
+  gCtx.stroke();
+  gCtx.restore();
+
+  // Centre dot
+  gCtx.fillStyle = '#172026';
+  gCtx.beginPath();
+  gCtx.arc(gCx, gCy, 4, 0, Math.PI * 2);
+  gCtx.fill();
+
+  // Numeric heading
+  gCtx.fillStyle = '#172026';
+  gCtx.font = 'bold 20px sans-serif';
+  gCtx.textAlign = 'center';
+  gCtx.textBaseline = 'middle';
+  gCtx.fillText(gHeading.toFixed(1) + '\u00b0', gCx, gCy + gR * 0.5);
 
   // Hole grid
   const hg = document.getElementById('holeGrid');
