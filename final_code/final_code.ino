@@ -791,26 +791,10 @@ void runBaseExit() {
   mqtt.sendLog("base exit start");
   mqtt.sendState("EXIT_BASE");
 
-  const float CHASSIS_BACK_Y  = -CHASSIS_LENGTH / 2;
-  const float CHASSIS_FRONT_Y =  CHASSIS_LENGTH / 2;
-  const float IR_TO_BACK_MM  = POS_IR_CENTRE_Y - CHASSIS_BACK_Y;
-  const float IR_TO_FRONT_MM = CHASSIS_FRONT_Y - POS_IR_CENTRE_Y;
-  const float IR_TO_RFID_MM  = POS_IR_CENTRE_Y - POS_RFID_ANTENNA_Y;
-  const float CHASSIS_BACK_TO_TREAD_BACK = 10;
-
-  const float EXIT_LEG1_MM = 460.0f - IR_TO_BACK_MM - CHASSIS_BACK_TO_TREAD_BACK;
-  const float EXIT_LEG2_MM = 330.0f;
-  const float EXIT_LEG3_MM = 205.0f - IR_TO_RFID_MM;
-  const float EXIT_LEG4_MM = 205.0f + IR_TO_RFID_MM;
-  const float EXIT_LEG5_MM = 330.0f;
-  const float EXIT_LEG6_MM = 320.0f - IR_TO_FRONT_MM;
-
   // ── Adaptive PD line-follow helper (blocking, scans RFID) ──
   // Returns when corner is detected or killed/timeout.
-  auto followLeg = [&](int baseSpeed, long targetTicks,
-                       float kp, float kd, int maxDiff,
+  auto followLeg = [&](int baseSpeed, float kp, float kd, int maxDiff,
                        unsigned long timeoutMs) {
-    long startEnc = (abs(encL) + abs(encR)) / 2;
     unsigned long deadline = millis() + timeoutMs;
     float prevError = 0;
     unsigned long enterMs = millis();
@@ -846,7 +830,6 @@ void runBaseExit() {
         setMotors(mc, 0, 0);
         char buf[48]; snprintf(buf, sizeof(buf), "exit: RFID tag %s", rfidBuf);
         mqtt.sendLog(buf);
-        startEnc = (abs(encL) + abs(encR)) / 2;
         enterMs = millis();
         deadline = millis() + timeoutMs;
         extremeMs = 0;
@@ -861,10 +844,6 @@ void runBaseExit() {
         for (int i = 0; i < IR_COUNT; i++)
           if (irVals[i] > 400) active++;
         if (active >= 5) { setMotors(mc, 0, 0); return; }
-
-        // Tertiary: encoder fallback
-        long avgEnc = (abs(encL) + abs(encR)) / 2;
-        if (avgEnc - startEnc >= (long)(targetTicks * 1.3f)) { setMotors(mc, 0, 0); return; }
       }
 
       // Line lost — sweep search for line
@@ -909,12 +888,12 @@ void runBaseExit() {
 
   const float LF_KP = 10.0f;
   const float LF_KD = 0.2f;
-  const int   LF_MAX_DIFF = 180;
+  const int   LF_MAX_DIFF = 250;
   const unsigned long LEG_TO = 10000;
 
   // ── Leg 1 ──
   mqtt.sendLog("exit leg 1");
-  followLeg(500, ticksForDistance(EXIT_LEG1_MM), LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(500, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
 
   delay(1000);
@@ -926,7 +905,7 @@ void runBaseExit() {
 
   // ── Leg 2 ──
   mqtt.sendLog("exit leg 2");
-  followLeg(500, ticksForDistance(EXIT_LEG2_MM), LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(500, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
 
   delay(1000);
@@ -938,38 +917,8 @@ void runBaseExit() {
 
   // ── Leg 3 ──
   mqtt.sendLog("exit leg 3");
-  followLeg(500, ticksForDistance(EXIT_LEG3_MM), LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(500, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
-
-  // ── Scan RFID ──
-  mqtt.sendLog("exit: scanning RFID");
-  bool tagFound = false;
-  for (int attempt = 0; attempt < 5 && !tagFound; attempt++) {
-    motion.startStraight(300, ticksForDistance(20));
-    unsigned long _encLast = micros();
-    unsigned long _checkLast = millis();
-    while (motion.tick(mc) == MotionSM::RUNNING) {
-      unsigned long _now = micros();
-      if (_now - _encLast >= 500) { _encLast = _now; pollEncoders(); }
-      if (millis() - _checkLast >= 5) { _checkLast = millis(); mqtt.loop(); handleEStop(); if (killed) { state = ST_IDLE; return; } }
-      if (readRFID(rfidBuf, sizeof(rfidBuf))) { setMotors(mc, 0, 0); motion.stop(); tagFound = true; break; }
-    }
-  }
-  if (!tagFound) {
-    for (int attempt = 0; attempt < 5 && !tagFound; attempt++) {
-      motion.startStraight(-300, ticksForDistance(20));
-      unsigned long _encLast = micros();
-      unsigned long _checkLast = millis();
-      while (motion.tick(mc) == MotionSM::RUNNING) {
-        unsigned long _now = micros();
-        if (_now - _encLast >= 500) { _encLast = _now; pollEncoders(); }
-        if (millis() - _checkLast >= 5) { _checkLast = millis(); mqtt.loop(); handleEStop(); if (killed) { state = ST_IDLE; return; } }
-        if (readRFID(rfidBuf, sizeof(rfidBuf))) { setMotors(mc, 0, 0); motion.stop(); tagFound = true; break; }
-      }
-    }
-  }
-  if (!tagFound) { mqtt.sendLog("exit: no RFID"); state = ST_IDLE; return; }
-  mqtt.sendLog("exit: RFID found");
 
   // ── Ask server to exit (commented out) ──
   // airlockAccepted = false;
@@ -990,7 +939,7 @@ void runBaseExit() {
 
   // ── Leg 4 ──
   mqtt.sendLog("exit leg 4");
-  followLeg(500, ticksForDistance(EXIT_LEG4_MM), LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(500, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
 
   delay(1000);
@@ -1002,7 +951,7 @@ void runBaseExit() {
 
   // ── Leg 5 ──
   mqtt.sendLog("exit leg 5");
-  followLeg(500, ticksForDistance(EXIT_LEG5_MM), LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(500, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
 
   delay(1000);
@@ -1014,7 +963,7 @@ void runBaseExit() {
 
   // ── Leg 6 ──
   mqtt.sendLog("exit leg 6");
-  followLeg(500, ticksForDistance(EXIT_LEG6_MM), LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(500, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
 
   // ── Tunnel traversal ──
