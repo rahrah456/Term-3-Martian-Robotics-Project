@@ -1,0 +1,109 @@
+Use british english and make all code and comments look human written. Keep everything very simple.
+
+When we've exited the base, we enter the arena, we'll be slightly misaligned but near a node. We need to align ourselves forward and go to this node that should be like 10cm away. When we query the server for fertility, it will tell us the coordinates of that node. We don't know the orientation of the coordinate grid, so we have to figure it out on the fly.
+
+What we need to do is go near the back of the arena and try to plant on each of these holes. Once we've finished depositing our 5 seeds in fertile holes, we should return to the base. There is a slight change to the orgiinal rules
+
+We will deadreckon betweeen holes and use our magnetometer and RFID sensor to know our absolute position.
+
+A friend will be working on base exit so don't touch that stuff, but he will need to use the heading from the magnetometer that we will be implementing back in.
+
+git info: we are on a branch.
+
+==== PROJECT CONTEXT ====
+
+Hardware:
+- Arduino Giga R1 WiFi (single M7 core, 50Hz main loop)
+- Motoron M3S550 on I2C Wire1, address 0x10. M1=right track, M2=left track.
+- Encoders: LA/LB=4,5 (left), RA/RB=2,3 (right). Polled at 2kHz during blocking loops, 50Hz in main loop. Quadrature state machine (4x, no ISRs).
+- IR reflectance: 9 sensors {30,23,24,25,26,27,28,29,22}, emitters on 40,41.
+- UDS: left(trig=7,echo=8), mid(trig=9,echo=10), right(trig=11,echo=12). pulseIn, 8000us timeout.
+- RFID: MFRC522_I2C at 0x28 on Wire1.
+- IMU: LSM6 accel/gyro only (magnetometer being re-integrated now). LIS3MDL on same I2C.
+- Kill switch: pin 38 INPUT_PULLUP, triggers on FALLING edge (press).
+- Light sensor: analog A11.
+- Servo: for seed dispensing.
+
+Motor limits: MOTOR_MIN=250, MOTOR_MAX=660, STEERING_MAX_DIFF=80. Right-bias=1.047.
+MOVE_SPEED=500, TURN_SPEED=660. TRACK_BASE_MM=161.
+
+MotionSM (non-blocking, tick() per loop):
+- STRAIGHT/TURN: open-loop, encoder-counted, obstacle check on filteredUdsM (<70mm).
+- LINE_FOLLOW: PID on IR centroid (kp=30, ki=1, kd=0). When line lost, steers with -kp*prevErr.
+- WALL_FOLLOW: PID on side UDS.
+- CENTRE_TUNNEL: proportional on L-R UDS difference with pidKp.
+
+Turn accel: first tick of TURN sets accel/decel to 180000, restored to 800 on exit.
+
+Obstacle detection only blocks STRAIGHT/TURN (not WALL_FOLLOW, LINE_FOLLOW, CENTRE_TUNNEL).
+
+Tick formulas (Config.h):
+- ticksForDistance(mm): 34.21488 * exp(-0.0870233*mm -1) + 3.60454*mm
+- ticksForTurn(deg): 6.0061 * deg
+- ticksToMm(ticks): 4.44137 * ln(ticks+1) + 0.273899*ticks
+
+UDS pipeline: pulseIn -> median-of-3 per sensor -> EMA (alpha=0.2) -> filtered globals.
+
+IR centroid: 0-8000 range, 4000=centre. Returns -1 when no line (sum<100). Uses v=vals[i] (line=high weight).
+
+Heading: pure gyro dead-reckoning (magnetometer removed during development). Being re-integrated now on the 'first' branch. Calibrated params in archive/component_tests/magnetometer_spherical_fitted_heading/.
+
+State machine states: INIT, IDLE, LOCATE, PLAN, NAVIGATE, AVOID, DEPOSIT, RETURN_BASE, REVIVE, LET_IN, EXIT_BASE, TEST.
+
+Enable chain: killed (hardware) gates all. serverAllow (heartbeat) and dashboardDesired (MQTT) are temporarily bypassed — isEffectivelyEnabled() returns true.
+
+MQTT via MiniMessenger. Robot name: "Haunter2". Group 3.
+Dashboard command topic: lab/g/{GROUP_ID}/from/{DASHBOARD_ID}/to/{ROBOT_ID}
+Dashboard subscribes: lab/g/{GROUP_ID}/from/{ROBOT_ID}/to/{DASHBOARD_ID}
+Heartbeat timeout: 5s.
+Dashboard: Python HTTP/SSE server on port 8081, no Serial prints.
+
+Arena: 9x9 hole grid, 238mm spacing. Node spacing also 238mm.
+RFID sends 8-char contiguous hex (no spaces). Tag data parsed via arena.rfidToHole().
+
+Key files:
+- final_code/final_code.ino: entry point, setup, 50Hz loop, state machine, blocking sequences.
+- Config.h: pins, constants, tick formulas.
+- Sensors.h: IR, UDS, RFID, IMU (LIS3MDL removed, being readded).
+- Control.h: MotionSM, setMotors, PID helpers, ReviveMove.
+- Localisation.h: dead-reckoning from encoders+gyro, RFID pose correction.
+- MQTTManager.h: MiniMessenger wrapper, heartbeat, callback routing.
+- Map.h: 9x9 grid with RFID-to-hole mapping.
+- dashboard.py: MQTT subscriber + HTTP/SSE server.
+- secrets.h: WiFi/MQTT credentials (not tracked).
+
+Current branch: 'first' (for magnetometer re-integration).
+
+Turn multipliers: TurnMultSet struct with separate sets for avoid, grid, and exit turns/moves, tuneable via dashboard MQTT commands (OVERRIDE_AVOID_TURNS, OVERRIDE_GRID_TURNS, OVERRIDE_EXIT_TURNS, OVERRIDE_EXIT_MOVES).
+
+Obstacle avoidance (runAvoid): no backup. Moves 1 tile forward, then box detour: turn R, fwd 1, turn L, fwd 2, turn L, fwd 1, turn R, fwd 1.
+
+Deposit (runDeposit): starts directly with RFID search (no heading-rounding turn). lockSeeds not called inside it. g_seedIdx advances naturally. 6cm advance only in DEPOSIT test command.
+
+driveDist(ticks): shared encoder-based distance driver with RFID polling after 70mm. Used by runAvoid() and grid nav no-lines.
+
+Backtrack50 fix: uses abs(encL-startL) + abs(encR-startR) (not abs(encL)+abs(encR)).
+
+LINE_FOLLOW: no timeout at all. When line lost, steers with -kp*prevErr indefinitely until reacquired. CENTRE_TUNNEL uses pidKp (dashboard-tuneable), not hardcoded.
+
+Tunnel door thresholds: front UDS <10cm triggers stop (second door), >17cm detects door open.
+
+Airlock request format: "type=openAirlock airlock=X tag_id=... board_id=..."
+
+isFertileReply: raw strncmp + char-by-char scanning (before getKeyValue), matches server_comms_test.ino.
+
+loc.update() no longer takes imuHeading or motorsActive params. Heading is pure gyro integration.
+
+Dashboard: Python paho-mqtt + threaded HTTP (ThreadingMixIn) on port 8081. SSE push, no page refresh. No Serial prints. IR bar is mirrored (sensor8 on left, sensor0 on right) with values under each bar.
+
+Dashboard commands: TEST:FOLLOW_LINE, FOLLOW_WALL, OBSTACLE_AVOIDANCE, MOVE_TURN:mm,deg, DEPOSIT, EXIT_BASE, REVIVE, GRID_NAV, GRID_NAV_NOLINES, HEADING:0, SEED:1-5, OVERRIDE_AVOID_TURNS, OVERRIDE_GRID_TURNS, OVERRIDE_EXIT_TURNS, OVERRIDE_EXIT_MOVES. PID: kp/ki/kd/md via sliders.
+
+SENSOR message (16 fields): centroid, ir0..ir8, udsL, udsM, udsR, heading, lightVal, seedIdx.
+
+Config.h key constants: HOLE_SPACING_MM=238.0, OBSTACLE_STOP_MM=70, CHASSIS_LENGTH=170, CHASSIS_WIDTH=115, TREAD_WIDTH=27, DEPOSIT_EXTRA_MM=60.
+
+PIN_KILL_BTN=38, PIN_ACT_LED=39.
+
+Arduino libs needed: Motoron, MFRC522_I2C, MiniMessenger, LIS3MDL, LSM6, Servo, Wire.
+
+Dashboard Arduino libs: paho-mqtt (pip install).
