@@ -278,6 +278,27 @@ static void runTestLoop(unsigned long durationMs) {
   motion.stop();
 }
 
+void calibrateIR() {
+  uint16_t rawOff[IR_COUNT], rawOn[IR_COUNT];
+  readRawIR(rawOff);
+  digitalWrite(IR_EMITTER_1, HIGH);
+  digitalWrite(IR_EMITTER_2, HIGH);
+  delayMicroseconds(200);
+  readRawIR(rawOn);
+  digitalWrite(IR_EMITTER_1, LOW);
+  digitalWrite(IR_EMITTER_2, LOW);
+
+  char buf[64];
+  int pos = snprintf(buf, sizeof(buf), "IR raw: ");
+  for (int i = 0; i < IR_COUNT; i++) {
+    int32_t adj = (int32_t)rawOn[i] + IR_TIMEOUT_US - (int32_t)rawOff[i];
+    if (adj > IR_TIMEOUT_US) adj = IR_TIMEOUT_US;
+    if (adj < 0) adj = 0;
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "%s%d", i == 0 ? "" : ", ", adj);
+  }
+  mqtt.sendLog(buf);
+}
+
 void onMqttTestCommand(const String& cmd) {
   mqtt.sendLog("cmd received");
   Serial.print("Test: "); Serial.println(cmd);
@@ -413,6 +434,9 @@ void onMqttTestCommand(const String& cmd) {
     motorTestStop = true;
     setMotors(mc, 0, 0);
     mqtt.sendLog("motor stop");
+  }
+  else if (cmd == "CALIBRATE_IR") {
+    calibrateIR();
   }
 }
 
@@ -853,7 +877,7 @@ void runBaseExit() {
         if (!lineLostFlagged) { lineLostFlagged = true; lineLostMs = millis(); mqtt.sendLog("exit: line lost"); }
         if (millis() - lineLostMs >= 5000) { setMotors(mc, 0, 0); return; }
         int spinDir = ((millis() - lineLostMs) / 1000) % 2 == 0 ? 1 : -1;
-        setMotors(mc, spinDir * MOTOR_MAX, -spinDir * MOTOR_MAX);
+        setMotors(mc, spinDir * 400, -spinDir * 400);
         { unsigned long _encDeadline = micros() + 5000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
         continue;
       }
@@ -906,7 +930,7 @@ void runBaseExit() {
 
   // ── Leg 1 ──
   mqtt.sendLog("exit leg 1");
-  followLeg(MOTOR_MAX, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(400, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
 
   delay(1000);
@@ -918,7 +942,7 @@ void runBaseExit() {
 
   // ── Leg 2 ──
   mqtt.sendLog("exit leg 2");
-  followLeg(MOTOR_MAX, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(400, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
 
   delay(1000);
@@ -930,7 +954,7 @@ void runBaseExit() {
 
   // ── Leg 3 ──
   mqtt.sendLog("exit leg 3");
-  followLeg(MOTOR_MAX, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(400, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
 
   delay(1000);
@@ -956,7 +980,7 @@ void runBaseExit() {
   // if (!airlockAccepted) { mqtt.sendLog("exit: airlock denied"); state = ST_IDLE; return; }
   // ── Leg 5 ──
   mqtt.sendLog("exit leg 5");
-  followLeg(MOTOR_MAX, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(400, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
 
   delay(1000);
@@ -968,7 +992,7 @@ void runBaseExit() {
 
   // ── Leg 6 ──
   mqtt.sendLog("exit leg 6");
-  followLeg(MOTOR_MAX, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
+  followLeg(400, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
   if (killed) { state = ST_IDLE; return; }
 
   // ── Tunnel traversal ──
@@ -976,7 +1000,7 @@ void runBaseExit() {
   { unsigned long _ts = millis(); while (millis() - _ts < 3000) { mqtt.loop(); if (handleEStop()) { state = ST_IDLE; return; } delay(5); } }
 
   mqtt.sendLog("exit: tunnel start");
-  motion.startTunnelCentre(MOTOR_MAX, 2.0f, 80, 60000);
+  motion.startTunnelCentre(400, 2.0f, 80, 60000);
   {
     unsigned long _encLast = micros();
     unsigned long _checkLast = millis();
@@ -1005,7 +1029,7 @@ void runBaseExit() {
   } }
 
   mqtt.sendLog("exit: tunnel exit, 200mm");
-  motion.startTunnelCentre(MOTOR_MAX, 2.0f, 80, 30000);
+  motion.startTunnelCentre(400, 2.0f, 80, 30000);
   { long _encDoor = (abs(encL) + abs(encR)) / 2;
     long _targetTicks = ticksForDistance(200);
     unsigned long _encLast = micros();
