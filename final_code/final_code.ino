@@ -863,21 +863,56 @@ void runBaseExit() {
         continue;
       }
 
-      // Corner detection (skip first 300ms after start/RFID resume)
-      if (millis() - enterMs > 300) {
-        // Primary: ≥7 sensors active = perpendicular line spans array
-        int active = 0;
-        for (int i = 0; i < IR_COUNT; i++)
-          if (irVals[i] > 600) active++;
-        if (active >= 8 && irVals[3] > 800 && irVals[4] > 800) { setMotors(mc, 0, 0); return; }
+      // Corner detection — skip the first 600 ms after start or RFID resume
+      // to prevent triggering on lines the robot has just crossed.
+      if (millis() - enterMs > 600) {
+        // Scan active sensors and measure the span (first → last lit index).
+        //   T-junction: nearly all 9 sensors fire (full cross-line across the array).
+        //   L-junction: ≥5 sensors fire with a span ≥5 positions (one arm of the corner).
+        // Edge sensors (0,1,7,8) need deeper black (>800) to avoid light-cone false fires.
+        int active = 0, firstActive = -1, lastActive = -1;
+        for (int i = 0; i < IR_COUNT; i++) {
+          int threshold = (i <= 1 || i >= 7) ? 800 : 600;
+          if (irVals[i] > threshold) {
+            active++;
+            if (firstActive < 0) firstActive = i;
+            lastActive = i;
+          }
+        }
+        int span = (firstActive >= 0) ? (lastActive - firstActive) : 0;
+
+        // T-junction: 8+ sensors lit with the centre trio confirmed deep black
+        bool tJunction = (active >= 8 && irVals[3] > 800 && irVals[4] > 800 && irVals[5] > 800);
+
+        // L-junction: 5+ sensors lit spanning at least 5 index positions
+        // (catches corners where only one perpendicular arm is present)
+        bool lJunction  = (active >= 5 && span >= 5);
+
+        if (tJunction || lJunction) { setMotors(mc, 0, 0); return; }
       }
 
-      // Line lost — sweep search for line (max 5s)
+      // Line lost — three-phase spatial recovery:
+      //   Phase 1 (0–700 ms):   reverse slowly in case the robot overshot the line.
+      //   Phase 2 (700–2700 ms): gentle left arc to sweep the left side.
+      //   Phase 3 (2700–4700 ms): gentle right arc to sweep the right side.
+      // Each phase reads IR every tick so the line is caught the moment it reappears.
       if (centroid < 0) {
-        if (!lineLostFlagged) { lineLostFlagged = true; lineLostMs = millis(); mqtt.sendLog("exit: line lost"); }
-        if (millis() - lineLostMs >= 5000) { setMotors(mc, 0, 0); return; }
-        int spinDir = ((millis() - lineLostMs) / 1000) % 2 == 0 ? 1 : -1;
-        setMotors(mc, spinDir * 400, -spinDir * 400);
+        if (!lineLostFlagged) {
+          lineLostFlagged = true;
+          lineLostMs = millis();
+          mqtt.sendLog("exit: line lost — starting recovery");
+        }
+        unsigned long elapsed = millis() - lineLostMs;
+
+        if      (elapsed < 700)  { setMotors(mc, -250, -250); }   // Phase 1: back up
+        else if (elapsed < 2700) { setMotors(mc,  180,  280); }   // Phase 2: gentle left arc
+        else if (elapsed < 4700) { setMotors(mc,  280,  180); }   // Phase 3: gentle right arc
+        else {
+          setMotors(mc, 0, 0);
+          mqtt.sendLog("exit: line not found — giving up");
+          return;
+        }
+
         { unsigned long _encDeadline = micros() + 5000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
         continue;
       }
@@ -886,11 +921,13 @@ void runBaseExit() {
       float error = (float)centroid - 4000.0f;
       float absErr = fabsf(error);
 
-      // Secondary: extreme error sustained > 150ms = line escaped to edge
-      if (millis() - enterMs > 300) {
-        if (absErr > 3500.0f) {
+      // Secondary: extreme error sustained > 400 ms = line genuinely escaped to edge.
+      // Threshold raised to 3800 so normal aggressive PD corrections don't false-trigger.
+      // Blind window extended to 600 ms to match the primary junction guard above.
+      if (millis() - enterMs > 600) {
+        if (absErr > 3800.0f) {
           if (extremeMs == 0) extremeMs = millis();
-          else if (millis() - extremeMs > 150) { setMotors(mc, 0, 0); return; }
+          else if (millis() - extremeMs > 400) { setMotors(mc, 0, 0); return; }
         } else { extremeMs = 0; }
       }
 
@@ -962,22 +999,22 @@ void runBaseExit() {
   mqtt.sendLog("exit turn left");
   waitForMotion(); if (killed) { state = ST_IDLE; return; }
 
-  // ── Ask server to exit (commented out) ──
-  // airlockAccepted = false;
-  // mqtt.sendAirlockRequest("A", rfidBuf);
-  // unsigned long _encLastA = micros();
-  // unsigned long _checkLastA = millis();
-  // unsigned long waitStart = millis();
-  // while (millis() - waitStart < 15000) {
-  //   unsigned long _nowA = micros();
-  //   if (_nowA - _encLastA >= 500) { _encLastA = _nowA; pollEncoders(); }
-  //   if (millis() - _checkLastA >= 5) { _checkLastA = millis(); mqtt.loop(); handleEStop(); if (killed) { state = ST_IDLE; return; } }
-  //   if (airlockAccepted) break;
-  //   if ((millis() - waitStart) > 2000 && (millis() - waitStart) % 2000 < 25)
-  //     mqtt.sendAirlockRequest("A", rfidBuf);
-  //   handleEStop(); if (killed) { state = ST_IDLE; return; }
-  // }
-  // if (!airlockAccepted) { mqtt.sendLog("exit: airlock denied"); state = ST_IDLE; return; }
+  // ── Ask server to exit ──
+  airlockAccepted = false;
+  mqtt.sendAirlockRequest("A", rfidBuf);
+  unsigned long _encLastA = micros();
+  unsigned long _checkLastA = millis();
+  unsigned long waitStart = millis();
+  while (millis() - waitStart < 15000) {
+    unsigned long _nowA = micros();
+    if (_nowA - _encLastA >= 500) { _encLastA = _nowA; pollEncoders(); }
+    if (millis() - _checkLastA >= 5) { _checkLastA = millis(); mqtt.loop(); handleEStop(); if (killed) { state = ST_IDLE; return; } }
+    if (airlockAccepted) break;
+    if ((millis() - waitStart) > 2000 && (millis() - waitStart) % 2000 < 25)
+      mqtt.sendAirlockRequest("A", rfidBuf);
+    handleEStop(); if (killed) { state = ST_IDLE; return; }
+  }
+  if (!airlockAccepted) { mqtt.sendLog("exit: airlock denied (continuing)"); }
   // ── Leg 5 ──
   mqtt.sendLog("exit leg 5");
   followLeg(400, LF_KP, LF_KD, LF_MAX_DIFF, LEG_TO);
@@ -1000,10 +1037,11 @@ void runBaseExit() {
   { unsigned long _ts = millis(); while (millis() - _ts < 3000) { mqtt.loop(); if (handleEStop()) { state = ST_IDLE; return; } delay(5); } }
 
   mqtt.sendLog("exit: tunnel start");
-  motion.startTunnelCentre(400, 2.0f, 80, 60000);
+  motion.startTunnelCentre(400, 10.0f, 80, 60000);  // kp=10 gives ~100-unit correction per 10cm offset
   {
     unsigned long _encLast = micros();
     unsigned long _checkLast = millis();
+    unsigned long _lineStartMs = 0;
     while (motion.tick(mc, -1, filteredUdsM, filteredUdsL, filteredUdsR) == MotionSM::RUNNING) {
       unsigned long _now = micros();
       if (_now - _encLast >= 500) { _encLast = _now; pollEncoders(); }
@@ -1013,40 +1051,49 @@ void runBaseExit() {
         if (handleEStop()) { motion.stop(); setMotors(mc, 0, 0); state = ST_IDLE; return; }
         if (!mqtt.isEffectivelyEnabled()) { motion.stop(); setMotors(mc, 0, 0); state = ST_IDLE; return; }
       }
+      // Refresh UDS every tick — centring controller needs live left/right readings
+      uds.tick();
+      filteredUdsL = udsLFilter.update((float)uds.distances[UDSManager::LEFT]);
+      filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+      filteredUdsR = udsRFilter.update((float)uds.distances[UDSManager::RIGHT]);
+      // Black line for 2s → stop
+      readIR(irVals);
+      int centroid = irCentroid(irVals);
+      if (centroid >= 0) {
+        if (_lineStartMs == 0) _lineStartMs = millis();
+        else if (millis() - _lineStartMs >= 2000) {
+          motion.stop(); setMotors(mc, 0, 0);
+          mqtt.sendLog("exit: tunnel line stop");
+          break;
+        }
+      } else {
+        _lineStartMs = 0;
+      }
+      // Door / obstacle in front → stop and wait until clear
       if (filteredUdsM > 0 && filteredUdsM <= 10.0f) {
-        motion.stop();
-        setMotors(mc, 0, 0);
-        break;
-      }
-    }
-  }
-  setMotors(mc, 0, 0);
-  mqtt.sendLog("exit: at door, 2s delay");
-  { unsigned long _ts = millis(); while (millis() - _ts < 2000) {
-    mqtt.loop(); if (handleEStop()) { state = ST_IDLE; return; }
-    if (filteredUdsM > 10.0f) break;
-    delay(5);
-  } }
-
-  mqtt.sendLog("exit: tunnel exit, 200mm");
-  motion.startTunnelCentre(400, 2.0f, 80, 30000);
-  { long _encDoor = (abs(encL) + abs(encR)) / 2;
-    long _targetTicks = ticksForDistance(200);
-    unsigned long _encLast = micros();
-    unsigned long _checkLast = millis();
-    while (motion.tick(mc, -1, filteredUdsM, filteredUdsL, filteredUdsR) == MotionSM::RUNNING) {
-      unsigned long _now = micros();
-      if (_now - _encLast >= 500) { _encLast = _now; pollEncoders(); }
-      if (millis() - _checkLast >= 5) {
-        _checkLast = millis();
-        mqtt.loop();
-        if (handleEStop()) { motion.stop(); setMotors(mc, 0, 0); state = ST_IDLE; return; }
-        if (!mqtt.isEffectivelyEnabled()) { motion.stop(); setMotors(mc, 0, 0); state = ST_IDLE; return; }
-      }
-      if ((abs(encL) + abs(encR)) / 2 - _encDoor >= _targetTicks) {
-        motion.stop();
-        setMotors(mc, 0, 0);
-        break;
+        motion.stop(); setMotors(mc, 0, 0);
+        mqtt.sendLog("exit: door wait");
+        {
+          unsigned long _doorCheckLast = millis();
+          unsigned long _doorEncLast = micros();
+          while (true) {
+            unsigned long __now = micros();
+            if (__now - _doorEncLast >= 500) { _doorEncLast = __now; pollEncoders(); }
+            // Refresh UDS so filteredUdsM actually reflects whether the door has opened
+            uds.tick();
+            filteredUdsL = udsLFilter.update((float)uds.distances[UDSManager::LEFT]);
+            filteredUdsM = udsMFilter.update((float)uds.distances[UDSManager::MID]);
+            filteredUdsR = udsRFilter.update((float)uds.distances[UDSManager::RIGHT]);
+            if (millis() - _doorCheckLast >= 5) {
+              _doorCheckLast = millis(); mqtt.loop();
+              if (handleEStop()) { state = ST_IDLE; return; }
+              if (!mqtt.isEffectivelyEnabled()) { state = ST_IDLE; return; }
+            }
+            if (filteredUdsM > 10.0f) break;  // door open — clear to proceed
+          }
+        }
+        _lineStartMs = 0;
+        motion.startTunnelCentre(400, 10.0f, 80, 60000);  // resume with same kp
       }
     }
   }
