@@ -800,6 +800,7 @@ void runBaseExit() {
     unsigned long enterMs = millis();
     unsigned long extremeMs = 0;
     bool lineLostFlagged = false;
+    float integral = 0;
     unsigned long _snapLast = 0;
     unsigned long _encLast = micros();
     unsigned long _checkLast = millis();
@@ -821,7 +822,7 @@ void runBaseExit() {
       // Blind forward first 500ms — ignore centroid, just drive straight
       if (millis() - enterMs < 500) {
         setMotors(mc, baseSpeed, baseSpeed);
-        { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
+        { unsigned long _encDeadline = micros() + 5000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
         continue;
       }
 
@@ -833,7 +834,7 @@ void runBaseExit() {
         enterMs = millis();
         deadline = millis() + timeoutMs;
         extremeMs = 0;
-        { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
+        { unsigned long _encDeadline = micros() + 5000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
         continue;
       }
 
@@ -842,7 +843,7 @@ void runBaseExit() {
         // Primary: ≥5 sensors active = perpendicular line spans array
         int active = 0;
         for (int i = 0; i < IR_COUNT; i++)
-          if (irVals[i] > 400) active++;
+          if (irVals[i] > 500) active++;
         if (active >= 5) { setMotors(mc, 0, 0); return; }
       }
 
@@ -851,7 +852,7 @@ void runBaseExit() {
         if (!lineLostFlagged) { lineLostFlagged = true; mqtt.sendLog("exit: line lost"); }
         int spinDir = ((millis() - enterMs) / 1000) % 2 == 0 ? 1 : -1;
         setMotors(mc, spinDir * 400, -spinDir * 400);
-        { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
+        { unsigned long _encDeadline = micros() + 5000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
         continue;
       }
       lineLostFlagged = false;
@@ -872,7 +873,10 @@ void runBaseExit() {
       // PD
       float deriv = error - prevError;
       prevError = error;
-      float correction = kp * error + kd * deriv;
+      integral += error;
+      if (integral > 500.0f) integral = 500.0f;
+      if (integral < -500.0f) integral = -500.0f;
+      float correction = kp * error + kd * deriv + 0.02f * integral;
       if (correction > maxDiff) correction = maxDiff;
       if (correction < -maxDiff) correction = -maxDiff;
 
@@ -881,13 +885,13 @@ void runBaseExit() {
 
       setMotors(mc, left, right);
 
-      { unsigned long _encDeadline = micros() + 20000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
+      { unsigned long _encDeadline = micros() + 5000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
     }
     setMotors(mc, 0, 0);
   };
 
-  const float LF_KP = 10.0f;
-  const float LF_KD = 0.2f;
+  const float LF_KP = 2.0f;
+  const float LF_KD = 0.5f;
   const int   LF_MAX_DIFF = 250;
   const unsigned long LEG_TO = 10000;
 
