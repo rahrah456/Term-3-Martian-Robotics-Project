@@ -16,8 +16,8 @@ const int PIN_ENC_RA = 2;   // right track encoder
 const int PIN_ENC_RB = 3;
 
 const float TRACK_BASE_MM = 161.0;  // distance between tread centres
-const int MOTOR_MIN = 250;           // below this, friction wins
-const int MOTOR_MAX = 660;           // absolute ceiling
+const int MOTOR_MIN = 300;           // below this, friction wins
+const int MOTOR_MAX = 800;           // absolute ceiling (Motoron range -800..800)
 const int STEERING_MAX_DIFF = 80;    // max differential for line/wall follow
 
 // ── IR Reflectance Array (9 sensors) ────────────────────────
@@ -78,7 +78,15 @@ const int PIN_ACT_LED  = 39;    // HIGH = red (stopped), LOW = green (running)
 // MFRC522_I2C on Wire1, address 0x28
 
 // ── IMU ─────────────────────────────────────────────────────
-// LSM6 (accel/gyro) on Wire (magnetometer removed — unreliable)
+// LSM6 (accel/gyro) + LIS3MDL (magnetometer) on Wire.
+
+// ── Magnetometer Lookup Table ────────────────────────────────
+// 4-entry cardinal lookup table for raw-mag→grid-heading conversion.
+// magLookupRaw[N] = raw mag heading when robot faces grid-north (0°),
+// magLookupRaw[E] = raw mag heading when robot faces grid-east (90°),
+// etc.  Initialised from the old single-offset.  Update at runtime
+// by pressing Set North / East / South / West on the dashboard.
+const float MAG_LOOKUP_INIT[] = { 320.6f, 50.6f, 140.6f, 230.6f };
 
 // ── Bumper (TODO: confirm pin once wired) ───────────────────
 // Digital switch on front bumper — TODO: wire to Giga GPIO
@@ -109,11 +117,11 @@ const float DEPOSIT_EXTRA_MM = DEPOSIT_HALF_DETECT_MM + DEPOSIT_RFID_TO_CHUTE_MM
 
 // ── Navigation Speeds ───────────────────────────────────────
 const int MOVE_SPEED = 500;    // constant speed for straight-line moves
-const int TURN_SPEED = 660;    // constant speed for tank turns
+const int TURN_SPEED = 800;    // constant speed for tank turns (Motoron max)
 
 // ── Motor Bias ──────────────────────────────────────────────
 // Left track is ~4.2% stronger; compensate by giving right track more power.
-const float BIAS_RIGHT = 1.047f;
+const float BIAS_RIGHT = 1.15f;
 
 // ── Tick Calibration ──────────────────────────────────────────
 // Fitted from tick_calibration data:

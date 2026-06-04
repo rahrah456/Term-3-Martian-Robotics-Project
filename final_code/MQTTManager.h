@@ -59,7 +59,7 @@ public:
   void (*onRevive)(const char* robotId);
   void (*onTestCommand)(const String& cmd);
   void (*onPidTune)(const String& key, float val);
-  void (*onHeadingReset)();
+  void (*onMagSetDirection)(const String& direction);
   void (*onAirlockReply)(bool accepted);
   void (*onSeedSelect)(int index);
 
@@ -68,7 +68,7 @@ public:
       onEnable(nullptr), onDisable(nullptr),
       onEmergency(nullptr), onHoleStatus(nullptr),
       onRevive(nullptr), onTestCommand(nullptr),
-      onPidTune(nullptr), onHeadingReset(nullptr),
+      onPidTune(nullptr), onMagSetDirection(nullptr),
       onAirlockReply(nullptr), onSeedSelect(nullptr) {}
 
   // ── Priority model ─────────────────────────────────────────
@@ -325,9 +325,15 @@ public:
       return;
     }
 
-    // Reset heading heading
+    // Reset heading — replaced by MAG_SET cardinal buttons
     if (strcmp(msg, "HEADING:0") == 0 || strcmp(msg, "RESET_HEADING") == 0) {
-      if (onHeadingReset) onHeadingReset();
+      if (onMagSetDirection) onMagSetDirection("NORTH");
+      return;
+    }
+
+    // Magnetometer calibration: MAG_SET:NORTH, EAST, SOUTH, WEST
+    if (strncmp(msg, "MAG_SET:", 8) == 0) {
+      if (onMagSetDirection) onMagSetDirection(String(msg + 8));
       return;
     }
 

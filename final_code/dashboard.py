@@ -288,7 +288,10 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <div class="ctrl-row">
       <button class="btn btn-primary" onclick="sendCmd('ENABLE')">ENABLE</button>
       <button class="btn btn-secondary" onclick="sendCmd('DISABLE')">DISABLE</button>
-      <button class="btn btn-small btn-secondary" onclick="sendCmd('HEADING:0')" style="margin-top:4px;">Reset Heading</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('MAG_SET:NORTH')">Set North</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('MAG_SET:EAST')">Set East</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('MAG_SET:SOUTH')">Set South</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('MAG_SET:WEST')">Set West</button>
     </div>
   </div>
 
@@ -353,6 +356,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:FOLLOW_WALL:500,1,8.0,'+getWallPidStr())">Follow Wall (R, 8cm)</button>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:DEPOSIT')">Deposit</button>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:EXIT_BASE')">Exit Base</button>
+      <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:START_EXPLORE')">Start Explore</button>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:REVIVE')">Revive</button>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:GRID_NAV')">Grid Nav</button>
       <button class="btn btn-small btn-secondary" onclick="sendCmd('TEST:GRID_NAV_NOLINES')">Grid Nav (no lines)</button>

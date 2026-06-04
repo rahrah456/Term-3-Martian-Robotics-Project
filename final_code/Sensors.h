@@ -4,8 +4,64 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <LSM6.h>
+#include <LIS3MDL.h>
 // #include <MFRC522_I2C.h>
 #include "Config.h"
+
+// ── Magnetometer calibration (from archive spherical-fit sketch) ──
+// RE-CALIBRATED MICROTESLA PARAMETERS (49.1579 uT FIELD). Copied verbatim
+// from archive/component_tests/magnetometer_spherical_fitted_heading/.
+static const float hard_iron_bias_x = -92.425254;
+static const float hard_iron_bias_y = 74.120214;
+static const float hard_iron_bias_z = -1.234978;
+
+static const double soft_iron_bias_xx = 0.928803;
+static const double soft_iron_bias_xy = 0.023684;
+static const double soft_iron_bias_xz = 0.070527;
+
+static const double soft_iron_bias_yx = 0.023684;
+static const double soft_iron_bias_yy = 0.925277;
+static const double soft_iron_bias_yz = -0.020476;
+
+static const double soft_iron_bias_zx = 0.070527;
+static const double soft_iron_bias_zy = -0.020476;
+static const double soft_iron_bias_zz = 0.797892;
+
+// Runtime-adjustable cardinal lookup table (updated by Set N/E/S/W on the
+// dashboard).  magLookupRaw[i] = raw mag heading when robot faces grid
+// direction i*90°.  Defined in final_code.ino.
+extern float magLookupRaw[4];
+
+// Convert a raw tilt-compensated mag heading (clockwise from mag north) into
+// a grid heading (0° = grid north = up, clockwise) by lerping through the
+// 4-entry cardinal lookup table.
+static float rawToGridHeading(float raw) {
+  for (int i = 0; i < 4; i++) {
+    int j = (i + 1) % 4;
+    float start = magLookupRaw[i];
+    float end   = magLookupRaw[j];
+
+    // Check if raw falls in segment [start, end) going clockwise
+    bool inSeg;
+    if (end > start) {
+      inSeg = (raw >= start && raw < end);
+    } else {
+      inSeg = (raw >= start || raw < end);
+    }
+
+    if (inSeg) {
+      float width  = end - start;
+      if (width < 0.0f) width += 360.0f;
+      float offset = raw - start;
+      if (offset < 0.0f) offset += 360.0f;
+      float t = (width > 0.001f) ? (offset / width) : 0.0f;
+      float gridH = (float)i * 90.0f + t * 90.0f;
+      if (gridH >= 360.0f) gridH -= 360.0f;
+      return gridH;
+    }
+  }
+  return raw;  // fallback (shouldn't happen)
+}
 
 // ============================================================
 //  SENSORS  —  IR, UDS, RFID, IMU, bumper, light sensor
@@ -184,13 +240,14 @@ float medianOf5(float a, float b, float c, float d, float e) {
 // readRFID() defined in final_code.ino (needs global rfid object).
 
 // ── IMU ─────────────────────────────────────────────────────
-// LSM6 accelerometer/gyro only (magnetometer removed — unreliable).
-// Heading is dead-reckoned from gyro integration; accel provides
-// pitch/roll for gravity subtraction.
+// LSM6 accelerometer/gyro + LIS3MDL magnetometer (both on Wire).
+// Heading comes from the tilt-compensated magnetometer (accurate to
+// ~1°); accel also provides pitch/roll for gravity subtraction.
 
 struct IMUData {
   LSM6    imu;
-  float headingDeg;     // gyro-integrated heading (dead-reckoned)
+  LIS3MDL mag;
+  float headingDeg;     // grid heading (mag, tilt-compensated, offset-corrected)
   float gyroZ;          // degrees per second (yaw rate)
   float accX, accY, accZ;
   float pitch, roll;    // radians, for gravity subtraction
@@ -205,14 +262,62 @@ void initIMU(IMUData& d) {
   d.ok = false;
   if (!d.imu.init())   { Serial.println("IMU: lsm6 init failed"); return; }
   d.imu.enableDefault();
+  if (!d.mag.init())   { Serial.println("IMU: lis3mdl init failed"); return; }
+  d.mag.enableDefault();   // ±4 Gauss default range
   d.ok = true;
   Serial.println("IMU: OK");
+}
+
+// ── Tilt-compensated magnetometer heading ───────────────────
+// Ported verbatim from the archive spherical-fit sketch (accurate to
+// ~1°), except the EMA is applied to the two atan2 arguments instead of
+// the wrapped degree output (degree wrapping breaks an EMA on the angle).
+// Returns clockwise degrees from magnetic north, with the robot's +X as
+// forward. Caller passes to rawToGridHeading() for the grid heading.
+static float computeMagHeading(IMUData& d) {
+  // 1. Convert raw LSB to microTesla
+  float ut_x = (float)d.mag.m.x / 68.42f;
+  float ut_y = (float)d.mag.m.y / 68.42f;
+  float ut_z = (float)d.mag.m.z / 68.42f;
+
+  // 2. Remove hard-iron offset
+  float xm_off = ut_x - hard_iron_bias_x;
+  float ym_off = ut_y - hard_iron_bias_y;
+  float zm_off = ut_z - hard_iron_bias_z;
+
+  // 3. Soft-iron 3x3 correction
+  LIS3MDL::vector<float> cal_m;
+  cal_m.x = (xm_off * soft_iron_bias_xx) + (ym_off * soft_iron_bias_yx) + (zm_off * soft_iron_bias_zx);
+  cal_m.y = (xm_off * soft_iron_bias_xy) + (ym_off * soft_iron_bias_yy) + (zm_off * soft_iron_bias_zy);
+  cal_m.z = (xm_off * soft_iron_bias_xz) + (ym_off * soft_iron_bias_yz) + (zm_off * soft_iron_bias_zz);
+
+  // 4. Gravity reference from the accelerometer
+  LIS3MDL::vector<float> a = {(float)d.imu.a.x, (float)d.imu.a.y, (float)d.imu.a.z};
+
+  // 5. East/North from cross products (tilt compensation)
+  LIS3MDL::vector<float> E, N;
+  LIS3MDL::vector_cross(&cal_m, &a, &E);
+  LIS3MDL::vector_normalize(&E);
+  LIS3MDL::vector_cross(&a, &E, &N);
+  LIS3MDL::vector_normalize(&N);
+
+  // 6. Project +X (forward) onto the horizontal plane.
+  //    EMA the two projections BEFORE atan2 (not the heading itself).
+  LIS3MDL::vector<float> from = {1, 0, 0};
+  static EMA eFilter(0.2f), nFilter(0.2f);
+  float eComp = eFilter.update(LIS3MDL::vector_dot(&E, &from));
+  float nComp = nFilter.update(LIS3MDL::vector_dot(&N, &from));
+
+  float heading = atan2f(eComp, nComp) * 180.0f / PI;
+  if (heading < 0) heading += 360.0f;
+  return heading;
 }
 
 void readIMU(IMUData& d) {
   if (!d.ok) return;
 
   d.imu.read();
+  d.mag.read();
 
   // Scale values
   d.accX = d.imu.a.x * (1.0f / 16384.0f);
@@ -230,15 +335,9 @@ void readIMU(IMUData& d) {
   d.pitch = atan2f(-ax, sqrtf(ay * ay + az * az));
   d.roll  = atan2f(ay, az);
 
-  // Heading from gyro integration (local static, raw estimate)
-  static unsigned long _lastUs = 0;
-  unsigned long _now = micros();
-  float _dt = (_lastUs == 0) ? 0.02f : (_now - _lastUs) / 1000000.0f;
-  _lastUs = _now;
-  if (_dt <= 0 || _dt > 0.05) _dt = 0.02f;
-  d.headingDeg += d.gyroZ * _dt;
-  if (d.headingDeg < 0.0f) d.headingDeg += 360.0f;
-  if (d.headingDeg >= 360.0f) d.headingDeg -= 360.0f;
+  // Heading from the tilt-compensated magnetometer, rotated into the grid
+  // frame so 0° = up = (0,-1) (towards the back of the arena).
+  d.headingDeg = rawToGridHeading(computeMagHeading(d));
 }
 
 // ── Bumper ──────────────────────────────────────────────────
