@@ -829,6 +829,10 @@ void runBaseExit() {
     unsigned long _snapLast = 0;
     unsigned long _encLast = micros();
     unsigned long _checkLast = millis();
+    // Encoder snapshot at leg start — used for distance-based junction gate.
+    // The IR array sits at POS_IR_CENTRE_Y (17 mm forward of robot centre, 68 mm
+    // behind the front). We must travel ≥80 mm before any junction can be real.
+    long legStartEncL = encL, legStartEncR = encR;
 
     while (millis() < deadline) {
       unsigned long _now = micros();
@@ -859,13 +863,13 @@ void runBaseExit() {
         enterMs = millis();
         deadline = millis() + timeoutMs;
         extremeMs = 0;
+        legStartEncL = encL; legStartEncR = encR;
         { unsigned long _encDeadline = micros() + 5000; unsigned long _encLastE = micros(); while (micros() < _encDeadline) { unsigned long _nowE = micros(); if (_nowE - _encLastE >= 500) { _encLastE = _nowE; pollEncoders(); } } }
         continue;
       }
 
-      // Corner detection — skip the first 600 ms after start or RFID resume
-      // to prevent triggering on lines the robot has just crossed.
-      if (millis() - enterMs > 600) {
+      long encAvg = (abs(encL - legStartEncL) + abs(encR - legStartEncR)) / 2;
+      if (encAvg > ticksForDistance(50)) {
         // Scan active sensors and measure the span (first → last lit index).
         //   T-junction: nearly all 9 sensors fire (full cross-line across the array).
         //   L-junction: ≥5 sensors fire with a span ≥5 positions (one arm of the corner).
@@ -884,9 +888,12 @@ void runBaseExit() {
         // T-junction: 8+ sensors lit with the centre trio confirmed deep black
         bool tJunction = (active >= 8 && irVals[3] > 800 && irVals[4] > 800 && irVals[5] > 800);
 
-        // L-junction: 5+ sensors lit spanning at least 5 index positions
-        // (catches corners where only one perpendicular arm is present)
-        bool lJunction  = (active >= 5 && span >= 5);
+        // L-junction: 5+ sensors lit spanning at least 5 index positions with no gaps,
+        // reaching the array edge — confirms a genuine cross-tape arm, not an angled
+        // approach line that sweeps middle sensors.
+        bool noGaps = (active == (lastActive - firstActive + 1));
+        bool touchesEdge = (firstActive <= 2 || lastActive >= 6);
+        bool lJunction  = (active >= 5 && span >= 5 && noGaps && touchesEdge);
 
         if (tJunction || lJunction) { setMotors(mc, 0, 0); return; }
       }
@@ -922,9 +929,9 @@ void runBaseExit() {
       float absErr = fabsf(error);
 
       // Secondary: extreme error sustained > 400 ms = line genuinely escaped to edge.
-      // Threshold raised to 3800 so normal aggressive PD corrections don't false-trigger.
-      // Blind window extended to 600 ms to match the primary junction guard above.
-      if (millis() - enterMs > 600) {
+      // Gated by encoder distance (same 50mm threshold as primary junction) so the
+      // first few centimetres of a fresh leg can't false-trigger.
+      if (encAvg > ticksForDistance(50)) {
         if (absErr > 3800.0f) {
           if (extremeMs == 0) extremeMs = millis();
           else if (millis() - extremeMs > 400) { setMotors(mc, 0, 0); return; }
